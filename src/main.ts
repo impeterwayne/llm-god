@@ -42,7 +42,7 @@ const __dirname = path.dirname(__filename);
 
 const websites: string[] = [
   "https://chatgpt.com/",
-  "https://gemini.google.com",
+  "https://gemini.google.com/",
   "https://www.perplexity.ai/",
 ];
 

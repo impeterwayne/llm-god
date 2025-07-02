@@ -1,9 +1,4 @@
-import { BrowserWindow, WebPreferences, WebContentsView } from "electron"; // Added WebPreferences type
-
-interface CustomBrowserView extends WebContentsView {
-  id?: string; // Make id optional as it's assigned after creation
-}
-
+import { BrowserWindow, WebContentsView } from "electron"; // Added WebPreferences type
 /**
  * Creates and configures a new BrowserView for the main window
  * @param mainWindow - The main Electron window
@@ -13,93 +8,66 @@ interface CustomBrowserView extends WebContentsView {
  * @param webPreferences - Optional web preferences for the BrowserView
  * @returns The newly created BrowserView
  */
-export function addBrowserView(
-  mainWindow: BrowserWindow,
-  url: string,
-  websites: string[],
-  views: CustomBrowserView[],
-  webPreferences: WebPreferences = {},
-): CustomBrowserView {
-  const view: CustomBrowserView = new WebContentsView({
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      devTools: true,
-      ...webPreferences,
-    },
-  });
-
-  view.id = url;
-  mainWindow.contentView.addChildView(view);
-
-  const { width, height } = mainWindow.getBounds();
-
-  websites.push(url);
-  const viewWidth = Math.floor(width / websites.length);
-
-  views.forEach((v, index) => {
-    v.setBounds({
-      x: index * viewWidth,
-      y: 0,
-      width: viewWidth,
-      height: height - 235,
+export function addBrowserView(mainWindow, url, websites, views, webPreferences = {}) {
+    const view = new WebContentsView({
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            devTools: true,
+            ...webPreferences,
+        },
     });
-  });
-
-  view.setBounds({
-    x: (websites.length - 1) * viewWidth,
-    y: 0,
-    width: viewWidth,
-    height: height - 235,
-  });
-
-  view.webContents.setZoomFactor(1.5);
-  view.webContents.loadURL(url);
-  
-
-  views.push(view);
-  return view;
-}
-
-export function removeBrowserView(
-  mainWindow: BrowserWindow,
-  viewToRemove: CustomBrowserView, // Changed to viewToRemove for clarity
-  websites: string[],
-  views: CustomBrowserView[],
-): void {
-  const viewIndex = views.indexOf(viewToRemove);
-  if (viewIndex === -1) return;
-
-  mainWindow.contentView.removeChildView(viewToRemove);
-
-  const urlIndex = websites.findIndex((url) => url === viewToRemove.id);
-  if (urlIndex !== -1) {
-    websites.splice(urlIndex, 1);
-  }
-
-  views.splice(viewIndex, 1);
-
-  if (views.length === 0) return;
-
-  const { width, height } = mainWindow.getBounds();
-  const viewWidth = Math.floor(width / views.length);
-
-  views.forEach((v, index) => {
-    v.setBounds({
-      x: index * viewWidth,
-      y: 0,
-      width: viewWidth,
-      height: height - 235,
+    view.id = url;
+    mainWindow.contentView.addChildView(view);
+    const { width, height } = mainWindow.getBounds();
+    websites.push(url);
+    const viewWidth = Math.floor(width / websites.length);
+    views.forEach((v, index) => {
+        v.setBounds({
+            x: index * viewWidth,
+            y: 0,
+            width: viewWidth,
+            height: height - 235,
+        });
     });
-  });
+    view.setBounds({
+        x: (websites.length - 1) * viewWidth,
+        y: 0,
+        width: viewWidth,
+        height: height - 235,
+    });
+    view.webContents.setZoomFactor(1.5);
+    view.webContents.loadURL(url);
+    views.push(view);
+    return view;
 }
-
-export function injectPromptIntoView(
-  view: CustomBrowserView,
-  prompt: string,
-): void {
-  if (view.id && view.id.match("chatgpt")) {
-    view.webContents.executeJavaScript(`
+export function removeBrowserView(mainWindow, viewToRemove, // Changed to viewToRemove for clarity
+websites, views) {
+    const viewIndex = views.indexOf(viewToRemove);
+    if (viewIndex === -1)
+        return;
+    mainWindow.contentView.removeChildView(viewToRemove);
+    const urlIndex = websites.findIndex((url) => url === viewToRemove.id);
+    if (urlIndex !== -1) {
+        websites.splice(urlIndex, 1);
+    }
+    views.splice(viewIndex, 1);
+    if (views.length === 0)
+        return;
+    const { width, height } = mainWindow.getBounds();
+    const viewWidth = Math.floor(width / views.length);
+    views.forEach((v, index) => {
+        v.setBounds({
+            x: index * viewWidth,
+            y: 0,
+            width: viewWidth,
+            height: height - 235,
+        });
+    });
+}
+export function injectPromptIntoView(view, prompt) {
+    if (view.id && view.id.match("chatgpt")) {
+        view.webContents.executeJavaScript(`
             (function() {
                 const inputElement = document.querySelector('#prompt-textarea > p');
                 if (inputElement) {
@@ -109,8 +77,9 @@ export function injectPromptIntoView(
                 }
             })();
         `);
-  } else if (view.id && view.id.match("gemini")) {
-    view.webContents.executeJavaScript(`
+    }
+    else if (view.id && view.id.match("gemini")) {
+        view.webContents.executeJavaScript(`
             {
                 var inputElement = document.querySelector(".ql-editor.textarea");
                 if (inputElement) {
@@ -121,29 +90,42 @@ export function injectPromptIntoView(
                 }
             }
         `);
-  } else if (view.id && view.id.match("perplexity")) { 
-    // view.webContents.openDevTools({ mode: "detach" });
-    view.webContents.focus();
-    view.webContents.executeJavaScript(`
+    }
+    else if (view.id && view.id.match("perplexity")) {
+        // view.webContents.openDevTools({ mode: "detach" });
+        view.webContents.focus();
+        view.webContents.executeJavaScript(`
         var inputElement = document.getElementById('ask-input');
 
 if (inputElement) {
     // 2. Define an async function to perform the paste.
-    async function pasteText(element, text) {
-        try {
-            // 3. Focus the element to make it the active target.
-            element.focus();
+    async function pasteIntoElement(element, text) {
+    try {
+        // 1. Find the inner paragraph and clear its content.
+        let p = element.querySelector('p');
+        if (p) {
+            p.textContent = '';
+        } else {
+            // Fallback if no <p> exists
             element.textContent = '';
-            // 4. Use the modern Clipboard API to write the text.
-            await navigator.clipboard.writeText(text);
-
-            // 5. Execute the browser's native 'paste' command.
-            document.execCommand('paste');
-
-        } catch (err) {
-            console.error("Paste command failed:", err);
         }
+        
+        // 2. Dispatch an 'input' event to ensure the framework registers the clear.
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+
+        // 3. Focus the element to make it the active target.
+        element.focus();
+
+        // 4. Use the Clipboard API to write the new text.
+        await navigator.clipboard.writeText(text);
+
+        // 5. Execute the native 'paste' command.
+        document.execCommand('paste');
+
+    } catch (err) {
+        console.error("Paste command failed:", err);
     }
+}
 
     // 6. Call the function with the element and your text.
     pasteText(inputElement, \`${prompt}\`);
@@ -152,13 +134,13 @@ if (inputElement) {
     console.error("Could not find the input element.");
 }
     `);
-    const parentWindow = BrowserWindow.fromWebContents(view.webContents);
-
-if (parentWindow) {
-    parentWindow.focus();
-}
-} else if (view.id && view.id.match("claude")) {
-    view.webContents.executeJavaScript(`
+        const parentWindow = BrowserWindow.fromWebContents(view.webContents);
+        if (parentWindow) {
+            parentWindow.focus();
+        }
+    }
+    else if (view.id && view.id.match("claude")) {
+        view.webContents.executeJavaScript(`
             {
                 var inputElement = document.querySelector('div.ProseMirror');
                 if (inputElement) {
@@ -166,8 +148,9 @@ if (parentWindow) {
                 }
             }
         `);
-  } else if (view.id && view.id.match("grok")) {
-    view.webContents.executeJavaScript(`
+    }
+    else if (view.id && view.id.match("grok")) {
+        view.webContents.executeJavaScript(`
             {
                 var inputElement = document.querySelector('textarea');
                 if (inputElement) {
@@ -182,8 +165,9 @@ if (parentWindow) {
                 }
             }
         `);
-  } else if (view.id && view.id.match("deepseek")) {
-    view.webContents.executeJavaScript(`
+    }
+    else if (view.id && view.id.match("deepseek")) {
+        view.webContents.executeJavaScript(`
             {
                 var inputElement = document.querySelector('textarea');
                 if (inputElement) {
@@ -194,8 +178,9 @@ if (parentWindow) {
                 }
             }
         `);
-  } else if (view.id && view.id.match("lmarena")) {
-    view.webContents.executeJavaScript(`
+    }
+    else if (view.id && view.id.match("lmarena")) {
+        view.webContents.executeJavaScript(`
             {
                 var inputElement = document.querySelector('textarea');
                 if (inputElement) {
@@ -206,12 +191,11 @@ if (parentWindow) {
                 }
         }
     `);
-  }
+    }
 }
-
-export function sendPromptInView(view: CustomBrowserView) {
-  if (view.id && view.id.match("chatgpt")) {
-    view.webContents.executeJavaScript(`
+export function sendPromptInView(view) {
+    if (view.id && view.id.match("chatgpt")) {
+        view.webContents.executeJavaScript(`
             var btn = document.querySelector('button[aria-label*="Send prompt"]');
             if (btn) {
                 btn.focus();
@@ -219,8 +203,9 @@ export function sendPromptInView(view: CustomBrowserView) {
                 btn.click();
             }
         `);
-  } else if (view.id && view.id.match("gemini")) {
-    view.webContents.executeJavaScript(`{
+    }
+    else if (view.id && view.id.match("gemini")) {
+        view.webContents.executeJavaScript(`{
       var btn = document.querySelector("button[aria-label*='Send message']");
       if (btn) {
         btn.setAttribute("aria-disabled", "false");
@@ -228,8 +213,9 @@ export function sendPromptInView(view: CustomBrowserView) {
         btn.click();
       }
     }`);
-  } else if (view.id && view.id.match("perplexity")) {
-    view.webContents.executeJavaScript(`
+    }
+    else if (view.id && view.id.match("perplexity")) {
+        view.webContents.executeJavaScript(`
                 {
         var buttons = Array.from(document.querySelectorAll('button.bg-super'));
         if (buttons[0]) {
@@ -239,8 +225,9 @@ export function sendPromptInView(view: CustomBrowserView) {
         }
       }
                 `);
-  } else if (view.id && view.id.match("claude")) {
-    view.webContents.executeJavaScript(`{
+    }
+    else if (view.id && view.id.match("claude")) {
+        view.webContents.executeJavaScript(`{
     var btn = document.querySelector("button[aria-label*='Send message']");
     if (!btn) var btn = document.querySelector('button:has(div svg)');
     if (!btn) var btn = document.querySelector('button:has(svg)');
@@ -250,8 +237,9 @@ export function sendPromptInView(view: CustomBrowserView) {
       btn.click();
     }
   }`);
-  } else if (view.id && view.id.match("grok")) {
-    view.webContents.executeJavaScript(`
+    }
+    else if (view.id && view.id.match("grok")) {
+        view.webContents.executeJavaScript(`
         {
         var btn = document.querySelector('button[aria-label*="Submit"]');
         if (btn) {
@@ -262,8 +250,9 @@ export function sendPromptInView(view: CustomBrowserView) {
             console.log("Element not found");
           }
       }`);
-  } else if (view.id && view.id.match("deepseek")) {
-    view.webContents.executeJavaScript(`
+    }
+    else if (view.id && view.id.match("deepseek")) {
+        view.webContents.executeJavaScript(`
         {
         var buttons = Array.from(document.querySelectorAll('div[role="button"]'));
         var btn = buttons[2]
@@ -274,8 +263,9 @@ export function sendPromptInView(view: CustomBrowserView) {
             console.log("Element not found");
           }
     }`);
-  } else if (view.id && view.id.match("lmarena")) {
-    view.webContents.executeJavaScript(`
+    }
+    else if (view.id && view.id.match("lmarena")) {
+        view.webContents.executeJavaScript(`
         {
         var btn = document.querySelector('button[type="submit"]');
         if (btn) {
@@ -286,5 +276,5 @@ export function sendPromptInView(view: CustomBrowserView) {
             console.log("Element not found");
           }
     }`);
-  }
+    }
 }
