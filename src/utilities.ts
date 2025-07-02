@@ -108,7 +108,7 @@ export function injectPromptIntoView(
                 }
             })();
         `);
-  } else if (view.id && view.id.match("bard")) {
+  } else if (view.id && view.id.match("gemini")) {
     view.webContents.executeJavaScript(`
             {
                 var inputElement = document.querySelector(".ql-editor.textarea");
