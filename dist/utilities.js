@@ -1,4 +1,4 @@
-import { BrowserWindow, WebContentsView } from "electron"; // Added WebPreferences type
+import { WebContentsView } from "electron"; // Added WebPreferences type
 /**
  * Creates and configures a new BrowserView for the main window
  * @param mainWindow - The main Electron window
@@ -92,52 +92,63 @@ export function injectPromptIntoView(view, prompt) {
         `);
     }
     else if (view.id && view.id.match("perplexity")) {
-        // view.webContents.openDevTools({ mode: "detach" });
-        view.webContents.focus();
+        //  view.webContents.openDevTools({ mode: "detach" });
         view.webContents.executeJavaScript(`
-        var inputElement = document.getElementById('ask-input');
+  (() => {
+    const editorElement = document.getElementById('ask-input');
+    const promptText = \`${prompt}\`;
 
-if (inputElement) {
-    // 2. Define an async function to perform the paste.
-    async function pasteIntoElement(element, text) {
-    try {
-        // 1. Find the inner paragraph and clear its content.
-        let p = element.querySelector('p');
-        if (p) {
-            p.textContent = '';
-        } else {
-            // Fallback if no <p> exists
-            element.textContent = '';
+   if (editorElement && editorElement.__lexicalEditor) {
+      const editor = editorElement.__lexicalEditor;
+      console.log("Lexical editor found. Setting state directly based on provided structure.");
+
+      editor.focus();
+      const newState = {
+        root: {
+          children: [{
+            children: [{
+              detail: 0,
+              format: 0,
+              mode: 'normal',
+              style: '',
+              text: promptText, 
+              type: 'text',
+              version: 1
+            }],
+            direction: 'ltr',
+            format: '',
+            indent: 0,
+            type: 'paragraph',
+            version: 1,
+          }],
+          direction: 'ltr',
+          format: '',
+          indent: 0,
+          type: 'root',
+          version: 1
         }
-        
-        // 2. Dispatch an 'input' event to ensure the framework registers the clear.
-        element.dispatchEvent(new Event('input', { bubbles: true }));
-
-        // 3. Focus the element to make it the active target.
-        element.focus();
-
-        // 4. Use the Clipboard API to write the new text.
-        await navigator.clipboard.writeText(text);
-
-        // 5. Execute the native 'paste' command.
-        document.execCommand('paste');
-
-    } catch (err) {
-        console.error("Paste command failed:", err);
+      };
+      const editorState = editor.parseEditorState(JSON.stringify(newState));
+      editor.setEditorState(editorState);
+      const dataTransfer = new DataTransfer();
+      dataTransfer.setData('text/plain', '');
+      const targetElement = editorElement.querySelector('[role="textbox"]') || editorElement;
+      const pasteEvent = new ClipboardEvent('paste', {
+              clipboardData: dataTransfer,
+              bubbles: true,
+              cancelable: true,
+              composed: true
+            });
+      targetElement.dispatchEvent(pasteEvent);
+    } else if (editorElement) {
+      // This fallback for a standard textarea looks correct.
+      var nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+      nativeTextAreaValueSetter.call(editorElement, promptText);
+      var event = new Event('input', { bubbles: true });
+      editorElement.dispatchEvent(event);
     }
-}
-
-    // 6. Call the function with the element and your text.
-    pasteText(inputElement, \`${prompt}\`);
-
-} else {
-    console.error("Could not find the input element.");
-}
-    `);
-        const parentWindow = BrowserWindow.fromWebContents(view.webContents);
-        if (parentWindow) {
-            parentWindow.focus();
-        }
+  })();
+`);
     }
     else if (view.id && view.id.match("claude")) {
         view.webContents.executeJavaScript(`
