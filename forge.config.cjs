@@ -1,6 +1,7 @@
 module.exports = {
   packagerConfig: {
     asar: true,
+    icon: 'logo.ico'
   },
   makers: [
     {
@@ -9,6 +10,9 @@ module.exports = {
     },
     {
       name: "@electron-forge/maker-squirrel",
+      config: {
+        setupIcon: 'logo.ico'
+      }
     },
   ],
   files: ["**/*", "!*.log"],
