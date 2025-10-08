@@ -408,6 +408,11 @@ export async function simulateFileDropInView(
             '[data-testid="chat-input-textarea"]',
             'textarea',
           ],
+          "www.claude.ai": [
+            '.MessageComposerDropzone',
+            '[data-testid="chat-input-textarea"]',
+            'textarea',
+          ],
           "gemini.google.com": [
             '[aria-label="Drop files here"]',
             'form [role="presentation"]',
@@ -460,6 +465,8 @@ export async function simulateFileDropInView(
           'perplexity.ai',
           'www.perplexity.ai',
           'gemini.google.com',
+          'claude.ai',
+          'www.claude.ai',
         ]);
 
         const shouldForceInputSync =
@@ -513,8 +520,20 @@ export async function simulateFileDropInView(
               weight += Math.min(area, 400000) / 100;
             }
 
-            if (element.matches?.('textarea, [contenteditable="true"], input[type="file"]')) {
+            const isFileInput =
+              element instanceof HTMLInputElement &&
+              element.type &&
+              element.type.toLowerCase() === 'file';
+
+            if (element.matches?.('textarea, [contenteditable="true"]')) {
               weight += 6000;
+            }
+
+            if (isFileInput) {
+              // Favor dropping on higher-level containers so we can manage file
+              // synchronization ourselves, preventing native file pickers from
+              // opening on hosts that rely on synthetic events (like Perplexity).
+              weight -= shouldForceInputSync ? 8000 : 2000;
             }
 
             const testId = (element.getAttribute?.('data-testid') || '').toLowerCase();
