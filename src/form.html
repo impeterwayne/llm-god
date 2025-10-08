@@ -4,45 +4,72 @@
     <meta charset="utf-8" />
     <title>Prompt Templates</title>
     <style>
+      :root {
+        --app-viewport-height: 1vh;
+      }
+
       body {
         font-family: "Segoe UI", Arial, sans-serif;
-        background-color: #f0f0f0;
+        background-color: #121212;
+        color: #e6e1e5;
         margin: 0;
-        padding: 0;
+        padding: 16px 0 0;
+        padding-top: calc(16px + env(safe-area-inset-top, 0px));
+        padding-left: env(safe-area-inset-left, 0px);
+        padding-right: env(safe-area-inset-right, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
         display: flex;
-        justify-content: center;
+        justify-content: flex-end;
         align-items: center;
-        height: 100vh;
-        width: 100vw;
+        min-height: 100vh;
+        min-height: calc(var(--app-viewport-height) * 100);
+        width: min(100vw, 100%);
         overflow-x: hidden; /* Remove horizontal scrollbar */
+        transition: justify-content 0.3s ease;
+      }
+
+      body.is-overflowing {
+        justify-content: flex-start;
+      }
+
+      @supports (height: 100dvh) {
+        body {
+          min-height: 100dvh;
+          min-height: calc(var(--app-viewport-height) * 100);
+        }
       }
 
       .form-container {
-        background-color: white;
-        padding: 25px;
-        border-radius: 8px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        background-color: #1e1b1f;
+        padding: 24px;
+        border-radius: 0;
+        box-shadow:
+          0 18px 40px rgba(0, 0, 0, 0.45),
+          0 2px 6px rgba(0, 0, 0, 0.3);
         width: 100%;
-        height: 100%; /* Cover entire modal window */
+        height: auto;
         max-width: none; /* Remove max-width constraint */
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: flex-start; /* Align items to the top */
+        gap: 16px;
       }
 
       h1 {
-        color: #333;
-        margin-bottom: 20px;
+        color: #e6e1e5;
+        margin-bottom: 10px;
         font-size: 24px;
         text-align: center;
+        font-weight: 600;
       }
 
       h2 {
-        color: #333;
-        margin-bottom: 15px;
-        font-size: 20px;
+        color: #e6e1e5;
+        margin-bottom: 8px;
+        font-size: 18px;
         text-align: center;
+        font-weight: 500;
       }
 
       form,
@@ -50,78 +77,99 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 15px;
-        width: 90%;
+        gap: 12px;
+        width: 100%;
       }
 
       textarea {
         width: 100%;
-        min-height: 200px;
-        padding: 12px;
-        border: 2px solid #e0e0e0;
-        border-radius: 6px;
+        min-height: 160px;
+        padding: 14px;
+        border: none;
+        border-radius: 12px;
+        background-color: #2b2830;
+        color: #e6e1e5;
         font-size: 16px;
-        transition: border-color 0.3s ease;
+        transition: box-shadow 0.3s ease, transform 0.2s ease;
         resize: vertical;
         font-family: "Segoe UI", Arial, sans-serif;
         line-height: 1.5;
-        margin: 15px 0;
+        margin: 10px 0;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+
+      textarea::placeholder {
+        color: rgba(230, 225, 229, 0.6);
       }
 
       textarea:focus {
         outline: none;
-        border-color: #0078d7;
-        box-shadow: 0 0 0 1px #0078d7;
+        box-shadow:
+          inset 0 0 0 2px #9a82ff,
+          0 0 0 4px rgba(154, 130, 255, 0.2);
+        transform: translateY(-1px);
       }
 
       button {
-        background-color: #0078d7; /* Default background color */
-        color: white; /* Text color */
-        padding: 12px;
+        background-color: #9a82ff;
+        color: #1c1b1f;
+        padding: 12px 18px;
         border: none;
-        border-radius: 6px;
+        border-radius: 999px;
         font-size: 16px;
         font-weight: 600;
         cursor: pointer;
-        transition: background-color 0.3s ease;
+        transition: transform 0.2s ease, box-shadow 0.3s ease, background-color 0.3s ease;
         width: 50%; /* Make button width proportional */
-        min-width: 120px; /* Ensure minimum width */
+        min-width: 140px; /* Ensure minimum width */
+        box-shadow: 0 4px 12px rgba(154, 130, 255, 0.4);
       }
 
       button:hover {
-        background-color: #006cbd; /* Darker blue on hover */
+        background-color: #b5a2ff;
+        transform: translateY(-1px);
+        box-shadow: 0 6px 16px rgba(154, 130, 255, 0.45);
       }
 
       button:active {
-        transform: scale(0.98); /* Slightly shrink on click */
+        transform: translateY(0);
+        box-shadow: 0 2px 8px rgba(154, 130, 255, 0.35);
       }
 
       button:disabled {
-        background-color: #add8e6; /* Light blue when disabled */
-        color: #ffffff; /* Ensure text is readable */
+        background-color: rgba(154, 130, 255, 0.35);
+        color: rgba(28, 27, 31, 0.6);
         cursor: not-allowed; /* Change cursor to indicate disabled state */
+        box-shadow: none;
       }
 
       .prompt-table {
-        max-height: 300px; /* Set maximum height */
+        max-height: 260px; /* Set maximum height */
         overflow-y: auto; /* Add vertical scroll bar if content exceeds max height */
         display: block;
         width: 100%; /* Maintain full width */
-        border-collapse: collapse;
-        overflow-x: hidden;
+        border-collapse: separate;
+        border-spacing: 0 10px;
+        padding: 2px 0;
       }
 
       .prompt-table tr {
         display: table; /* Ensure rows behave like table rows */
         width: 100%; /* Ensure rows take full width */
         table-layout: fixed; /* Fix the layout to prevent shrinking */
+        background-color: #2b2830;
+        border-radius: 16px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        overflow: hidden;
+        transition: transform 0.2s ease, box-shadow 0.3s ease;
       }
 
       .prompt-table th,
       .prompt-table td {
-        border: 1px solid #ddd;
-        padding: 8px;
+        border: none;
+        padding: 12px 16px;
         text-align: left;
+        color: #e6e1e5;
       }
 
       .prompt-table td {
@@ -129,8 +177,6 @@
         width: 100%; /* Ensure cells take full width */
         word-wrap: break-word; /* Wrap long text to prevent overflow */
         text-align: left; /* Align text to the left */
-        padding: 8px; /* Add padding for better readability */
-        border: 1px solid #ddd; /* Add border for better visibility */
       }
 
       .row-actions {
@@ -148,38 +194,35 @@
 
       .edit-button,
       .delete-button {
-        background: none;
+        background: rgba(230, 225, 229, 0.08);
         border: none;
         cursor: pointer;
         font-size: 16px;
-        padding: 4px;
-        border-radius: 4px;
-        transition: background-color 0.3s ease;
+        padding: 6px;
+        border-radius: 999px;
+        transition: background-color 0.3s ease, transform 0.2s ease;
+        color: #e6e1e5;
       }
 
-      .edit-button:hover {
-        background-color: #e0f7fa; /* Light blue background on hover */
-      }
-
+      .edit-button:hover,
       .delete-button:hover {
-        background-color: #ffebee; /* Light red background on hover */
+        background: rgba(154, 130, 255, 0.25);
+        transform: translateY(-1px);
       }
 
       .prompt-table tr.selected {
-        background-color: #d1e7fd; /* Highlight color for selected row */
+        box-shadow: 0 0 0 2px rgba(154, 130, 255, 0.4);
+        transform: translateY(-1px);
       }
 
       .prompt-table tr:hover {
-        background-color: #f1f1f1;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+        transform: translateY(-2px);
         cursor: pointer;
       }
 
       .choose-prompt-button:hover {
-        background-color: #218838;
-      }
-
-      .choose-prompt-button:active {
-        transform: scale(0.98);
+        background-color: #b5a2ff;
       }
     </style>
   </head>
@@ -202,5 +245,69 @@
       </form>
     </div>
     <script src="../dist/save_prompt.js"></script>
+    <script>
+      (() => {
+        const root = document.documentElement;
+        const body = document.body;
+        const formContainer = document.querySelector(".form-container");
+
+        if (!formContainer) {
+          return;
+        }
+
+        const getViewportHeight = () =>
+          window.visualViewport?.height ?? document.documentElement.clientHeight;
+
+        const updateOverflowState = () => {
+          const viewportHeight = getViewportHeight();
+          const styles = window.getComputedStyle(body);
+          const paddingTop = parseFloat(styles.paddingTop) || 0;
+          const paddingBottom = parseFloat(styles.paddingBottom) || 0;
+          const totalHeight =
+            formContainer.getBoundingClientRect().height + paddingTop + paddingBottom;
+
+          body.classList.toggle(
+            "is-overflowing",
+            totalHeight - viewportHeight > 1,
+          );
+        };
+
+        const setViewportHeight = () => {
+          const viewportHeight = getViewportHeight();
+          root.style.setProperty(
+            "--app-viewport-height",
+            `${Math.max(viewportHeight, 1) * 0.01}px`,
+          );
+          updateOverflowState();
+        };
+
+        setViewportHeight();
+
+        const handleViewportChange = () => setViewportHeight();
+
+        window.visualViewport?.addEventListener("resize", handleViewportChange);
+        window.visualViewport?.addEventListener("scroll", handleViewportChange);
+        window.addEventListener("resize", handleViewportChange, { passive: true });
+        window.addEventListener("orientationchange", handleViewportChange);
+
+        let resizeObserver;
+        if ("ResizeObserver" in window) {
+          resizeObserver = new ResizeObserver(updateOverflowState);
+          resizeObserver.observe(formContainer);
+        }
+
+        window.addEventListener(
+          "pagehide",
+          () => {
+            window.visualViewport?.removeEventListener("resize", handleViewportChange);
+            window.visualViewport?.removeEventListener("scroll", handleViewportChange);
+            window.removeEventListener("resize", handleViewportChange);
+            window.removeEventListener("orientationchange", handleViewportChange);
+            resizeObserver?.disconnect();
+          },
+          { once: true },
+        );
+      })();
+    </script>
   </body>
 </html>

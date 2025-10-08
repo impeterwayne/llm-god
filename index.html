@@ -8,6 +8,22 @@
     />
     <title>Multi-LLM Interface</title>
     <style>
+      :root {
+        color-scheme: dark;
+        --surface: #1f1f1f;
+        --surface-high: #272727;
+        --surface-variant: #2f2f2f;
+        --outline: #3d3d3d;
+        --text-primary: #f5f5f5;
+        --text-secondary: #c7c7c7;
+        --accent: #8ab4f8;
+        --accent-hover: #6ea3f7;
+        --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+        --radius-large: 20px;
+        --radius-medium: 14px;
+        --app-viewport-height: 1vh;
+      }
+
       * {
         margin: 0;
         padding: 0;
@@ -18,40 +34,74 @@
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
-        height: 100vh;
-        margin: 0;
-        background-color: black;
+        align-items: center;
+        min-height: 100vh;
+        min-height: calc(var(--app-viewport-height) * 100);
+        padding: 20px 0 0;
+        padding-top: calc(20px + env(safe-area-inset-top, 0px));
+        padding-left: env(safe-area-inset-left, 0px);
+        padding-right: env(safe-area-inset-right, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        background: radial-gradient(circle at top, #2a2a2a, #141414 65%, #0f0f0f);
+        font-family: "Inter", "Segoe UI", sans-serif;
+        color: var(--text-primary);
+        transition: justify-content 0.3s ease;
+      }
+
+      body.is-overflowing {
+        justify-content: flex-start;
+      }
+
+      @supports (height: 100dvh) {
+        body {
+          min-height: 100dvh;
+          min-height: calc(var(--app-viewport-height) * 100);
+        }
       }
 
       #prompt-area {
         display: flex;
-        background-color: #f0f0f0;
-        height: auto;
-        padding: 10px;
-        min-height: 120px; /* Ensure a minimum height */
-        max-height: 40%; /* Prevent it from taking too much space */
-        position: relative; /* Add this to create a new stacking context */
-        align-items: flex-start; /* Align children to the top */
+        gap: 14px;
+        padding: 22px;
+        border-radius: 0;
+        min-height: 120px;
+        align-items: stretch;
+        width: 100%;
+        max-width: none;
+        background-color: var(--surface);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        box-shadow: var(--shadow);
       }
 
       #prompt-input {
-        padding: 10px;
-        font-size: 30px;
-        font-family: "Times New Roman", Times, serif;
-        line-height: 1.5;
-        width: 88%;
-        height: 100%;
+        flex: 1;
+        padding: 14px;
+        font-size: 18px;
+        font-family: "Inter", "Segoe UI", sans-serif;
+        line-height: 1.6;
+        background: var(--surface-high);
+        border: 1px solid var(--outline);
+        border-radius: var(--radius-large);
+        color: var(--text-primary);
+        resize: none;
+        transition: border 0.2s ease, box-shadow 0.2s ease;
       }
 
-      /* Group dropdown and prompt-picker vertically */
+      #prompt-input::placeholder {
+        color: var(--text-secondary);
+      }
+
+      #prompt-input:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(138, 180, 248, 0.25);
+      }
+
       .button-group {
         display: flex;
         flex-direction: column;
-        align-items: flex-start; /* Align to the right */
-        width: 10%;
-        margin-left: auto;
-        margin-right: 10px;
-        gap: 10px; /* Space between buttons */
+        gap: 8px;
+        width: 208px;
       }
 
       .dropdown,
@@ -60,93 +110,82 @@
         position: relative;
       }
 
-      .utility-button {
-        width: 100%;
-        height: 50px;
-        font-size: 18px;
-        padding: 10px;
-        border: 2px solid #ccc;
-        border-radius: 4px;
-        background-color: #0078d7;
-        color: #fff;
-        cursor: pointer;
-        box-sizing: border-box;
-        font-weight: bold;
-        transition: background-color 0.3s ease;
-      }
-
-      .utility-button:hover {
-        background-color: #006cbd;
+      button {
+        font-family: inherit;
       }
 
       #dropdown-button,
-      .prompt-select {
+      .prompt-select,
+      .utility-button {
         width: 100%;
-        height: 50px;
-        font-size: 18px;
-        padding: 10px;
-        border: 2px solid #ccc;
-        border-radius: 4px;
-        background-color: #f0f0f0;
+        min-height: 46px;
+        font-size: 15px;
+        font-weight: 600;
+        padding: 10px 14px;
+        border-radius: var(--radius-medium);
+        border: 1px solid var(--outline);
+        background: linear-gradient(180deg, var(--surface-high), var(--surface-variant));
+        color: var(--text-secondary);
         cursor: pointer;
-        box-sizing: border-box;
-        display: block;
+        transition: transform 0.15s ease, box-shadow 0.15s ease,
+          border-color 0.15s ease, color 0.15s ease;
         text-align: center;
-        font-weight: bold;
+      }
+
+      #dropdown-button:hover,
+      .prompt-select:hover,
+      .utility-button:hover {
+        border-color: var(--accent);
+        color: var(--text-primary);
+        box-shadow: 0 6px 20px rgba(138, 180, 248, 0.25);
+        transform: translateY(-1px);
+      }
+
+      .utility-button {
+        background: linear-gradient(180deg, var(--accent), var(--accent-hover));
+        color: #0b182f;
+        border-color: transparent;
+      }
+
+      .utility-button:hover {
+        box-shadow: 0 10px 28px rgba(138, 180, 248, 0.35);
       }
 
       .dropdown-content {
         display: none;
         position: absolute;
-        top: 100%;
-        left: 5%;
-        width: 90%; /* Half the width of the button */
-        background-color: #f9f9f9;
-        box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.2);
-        border: 2px solid #0078d7;
-        border-radius: 8px;
-        padding: 4px;
-        max-height: 110px;
+        top: calc(100% + 8px);
+        left: 0;
+        width: 100%;
+        background-color: var(--surface-high);
+        border-radius: var(--radius-medium);
+        border: 1px solid var(--outline);
+        padding: 8px;
+        max-height: 200px;
         overflow-y: auto;
-        z-index: 1000; /* Ensure it's above other elements */
+        box-shadow: var(--shadow);
+        z-index: 1000;
       }
 
       .dropdown-item {
         width: 100%;
-        padding: 8px;
-        text-decoration: none;
-        display: block;
+        padding: 10px 12px;
+        border-radius: 10px;
         cursor: pointer;
-        font-weight: bold;
-        background-color: #e6e6e6;
-        border: none;
-        text-align: left;
-        box-sizing: border-box;
-        margin: 0;
-        margin-bottom: 5px;
-        font-size: 16px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        transition: background-color 0.15s ease, color 0.15s ease;
       }
 
       .dropdown-item:hover {
-        background-color: #ddd;
+        background-color: rgba(138, 180, 248, 0.12);
+        color: var(--text-primary);
       }
 
-      /* Remove any margins that might affect layout */
-      .prompt-picker {
-        margin: 0;
-      }
-
-      /* Ensure the dropdown doesn't affect layout when shown */
       .show {
         display: block;
-        position: absolute;
       }
     </style>
-    <script>
-      document.addEventListener("DOMContentLoaded", () => {
-        document.body.style.backgroundColor = "black";
-      });
-    </script>
     <script type="module" src="./dist/renderer.js"></script>
   </head>
 
@@ -172,5 +211,79 @@
       </div>
     </div>
   </body>
+  <script>
+      (() => {
+        const root = document.documentElement;
+        const body = document.body;
+        const promptArea = document.getElementById("prompt-area");
+
+        if (!promptArea) {
+          return;
+        }
+
+        const getViewportHeight = () =>
+          window.visualViewport?.height ?? document.documentElement.clientHeight;
+
+        const updateOverflowState = () => {
+          const viewportHeight = getViewportHeight();
+          const styles = window.getComputedStyle(body);
+          const paddingTop = parseFloat(styles.paddingTop) || 0;
+          const paddingBottom = parseFloat(styles.paddingBottom) || 0;
+          const totalHeight =
+            promptArea.getBoundingClientRect().height + paddingTop + paddingBottom;
+
+          body.classList.toggle(
+            "is-overflowing",
+            totalHeight - viewportHeight > 1,
+          );
+        };
+
+        const setViewportHeight = () => {
+          const viewportHeight = getViewportHeight();
+          root.style.setProperty(
+            "--app-viewport-height",
+            `${Math.max(viewportHeight, 1) * 0.01}px`,
+          );
+          updateOverflowState();
+        };
+
+        setViewportHeight();
+
+        const handleViewportChange = () => setViewportHeight();
+
+        window.visualViewport?.addEventListener("resize", handleViewportChange);
+        window.visualViewport?.addEventListener("scroll", handleViewportChange);
+        window.addEventListener("resize", handleViewportChange, { passive: true });
+        window.addEventListener("orientationchange", handleViewportChange);
+
+        if ("ResizeObserver" in window) {
+          const resizeObserver = new ResizeObserver(updateOverflowState);
+          resizeObserver.observe(promptArea);
+
+          window.addEventListener(
+            "pagehide",
+            () => {
+              window.visualViewport?.removeEventListener("resize", handleViewportChange);
+              window.visualViewport?.removeEventListener("scroll", handleViewportChange);
+              window.removeEventListener("resize", handleViewportChange);
+              window.removeEventListener("orientationchange", handleViewportChange);
+              resizeObserver.disconnect();
+            },
+            { once: true },
+          );
+        } else {
+          window.addEventListener(
+            "pagehide",
+            () => {
+              window.visualViewport?.removeEventListener("resize", handleViewportChange);
+              window.visualViewport?.removeEventListener("scroll", handleViewportChange);
+              window.removeEventListener("resize", handleViewportChange);
+              window.removeEventListener("orientationchange", handleViewportChange);
+            },
+            { once: true },
+          );
+        }
+      })();
+  </script>
   <script type="module" src="./dist/dropdown.js"></script>
 </html>

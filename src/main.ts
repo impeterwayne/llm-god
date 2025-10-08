@@ -115,6 +115,7 @@ function createWindow(): void {
     height: 1100,
     center: true,
     backgroundColor: "#000000",
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"), // This will point to dist/preload.js at runtime
       nodeIntegration: true,
@@ -123,6 +124,9 @@ function createWindow(): void {
     },
   });
   remote.enable(mainWindow.webContents);
+
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.removeMenu();
 
   mainWindow.loadFile(path.join(__dirname, "..", "index.html")); // Changed to point to root index.html
 
