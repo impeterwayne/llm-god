@@ -109,133 +109,151 @@ export function injectPromptIntoView(
 ): void {
   if (view.id && view.id.match("chatgpt")) {
     view.webContents.executeJavaScript(`
-            (function() {
-                const inputElement = document.querySelector('#prompt-textarea > p');
-                if (inputElement) {
-                    const inputEvent = new Event('input', { bubbles: true });
-                    inputElement.innerText = \`${prompt}\`;
-                    inputElement.dispatchEvent(inputEvent);
-                }
-            })();
-        `);
+      ((prompt) => {
+        const inputElement = document.querySelector('#prompt-textarea > p');
+        if (inputElement) {
+          const inputEvent = new Event('input', { bubbles: true });
+          inputElement.innerText = prompt;
+          inputElement.dispatchEvent(inputEvent);
+        }
+      })(${JSON.stringify(prompt)});
+    `);
   } else if (view.id && view.id.match("gemini")) {
     view.webContents.executeJavaScript(`
-            {
-                var inputElement = document.querySelector(".ql-editor.textarea");
-                if (inputElement) {
-                    const inputEvent = new Event('input', { bubbles: true });
-                    inputElement.value = \`${prompt}\`;
-                    inputElement.dispatchEvent(inputEvent);
-                    inputElement.querySelector('p').textContent = \`${prompt}\`;
-                }
-            }
-        `);
+      ((prompt) => {
+        const inputElement = document.querySelector('.ql-editor.textarea');
+        if (inputElement) {
+          const inputEvent = new Event('input', { bubbles: true });
+          inputElement.value = prompt;
+          inputElement.dispatchEvent(inputEvent);
+          const paragraph = inputElement.querySelector('p');
+          if (paragraph) {
+            paragraph.textContent = prompt;
+          }
+        }
+      })(${JSON.stringify(prompt)});
+    `);
   } else if (view.id && view.id.match("perplexity")) {
     //  view.webContents.openDevTools({ mode: "detach" });
     view.webContents.executeJavaScript(`
-  (() => {
-    const editorElement = document.getElementById('ask-input');
-    const promptText = \`${prompt}\`;
+      ((prompt) => {
+        const editorElement = document.getElementById('ask-input');
 
-   if (editorElement && editorElement.__lexicalEditor) {
-      const editor = editorElement.__lexicalEditor;
-      console.log("Lexical editor found. Setting state directly based on provided structure.");
+        if (editorElement && editorElement.__lexicalEditor) {
+          const editor = editorElement.__lexicalEditor;
+          console.log('Lexical editor found. Setting state directly based on provided structure.');
 
-      editor.focus();
-      const newState = {
-        root: {
-          children: [{
-            children: [{
-              detail: 0,
-              format: 0,
-              mode: 'normal',
-              style: '',
-              text: promptText, 
-              type: 'text',
-              version: 1
-            }],
-            direction: 'ltr',
-            format: '',
-            indent: 0,
-            type: 'paragraph',
-            version: 1,
-          }],
-          direction: 'ltr',
-          format: '',
-          indent: 0,
-          type: 'root',
-          version: 1
+          editor.focus();
+          const newState = {
+            root: {
+              children: [
+                {
+                  children: [
+                    {
+                      detail: 0,
+                      format: 0,
+                      mode: 'normal',
+                      style: '',
+                      text: prompt,
+                      type: 'text',
+                      version: 1,
+                    },
+                  ],
+                  direction: 'ltr',
+                  format: '',
+                  indent: 0,
+                  type: 'paragraph',
+                  version: 1,
+                },
+              ],
+              direction: 'ltr',
+              format: '',
+              indent: 0,
+              type: 'root',
+              version: 1,
+            },
+          };
+          const editorState = editor.parseEditorState(JSON.stringify(newState));
+          editor.setEditorState(editorState);
+          const dataTransfer = new DataTransfer();
+          dataTransfer.setData('text/plain', '');
+          const targetElement = editorElement.querySelector('[role="textbox"]') || editorElement;
+          const pasteEvent = new ClipboardEvent('paste', {
+            clipboardData: dataTransfer,
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+          });
+          targetElement.dispatchEvent(pasteEvent);
+        } else if (editorElement) {
+          // This fallback for a standard textarea looks correct.
+          const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype,
+            'value',
+          )?.set;
+          nativeTextAreaValueSetter?.call(editorElement, prompt);
+          const event = new Event('input', { bubbles: true });
+          editorElement.dispatchEvent(event);
         }
-      };
-      const editorState = editor.parseEditorState(JSON.stringify(newState));
-      editor.setEditorState(editorState);
-      const dataTransfer = new DataTransfer();
-      dataTransfer.setData('text/plain', '');
-      const targetElement = editorElement.querySelector('[role="textbox"]') || editorElement;
-      const pasteEvent = new ClipboardEvent('paste', {
-              clipboardData: dataTransfer,
-              bubbles: true,
-              cancelable: true,
-              composed: true
-            });
-      targetElement.dispatchEvent(pasteEvent);
-    } else if (editorElement) {
-      // This fallback for a standard textarea looks correct.
-      var nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-      nativeTextAreaValueSetter.call(editorElement, promptText);
-      var event = new Event('input', { bubbles: true });
-      editorElement.dispatchEvent(event);
-    }
-  })();
-`);
-} else if (view.id && view.id.match("claude")) {
+      })(${JSON.stringify(prompt)});
+    `);
+  } else if (view.id && view.id.match("claude")) {
     view.webContents.executeJavaScript(`
-            {
-                var inputElement = document.querySelector('div.ProseMirror');
-                if (inputElement) {
-                    inputElement.innerHTML = \`${prompt}\`;
-                }
-            }
-        `);
+      ((prompt) => {
+        const inputElement = document.querySelector('div.ProseMirror');
+        if (inputElement) {
+          inputElement.innerHTML = prompt;
+        }
+      })(${JSON.stringify(prompt)});
+    `);
   } else if (view.id && view.id.match("grok")) {
     view.webContents.executeJavaScript(`
-            {
-                var inputElement = document.querySelector('textarea');
-                if (inputElement) {
-                    const span = inputElement.previousElementSibling;
-                    if (span) {
-                        span.classList.add("hidden");
-                    }
-                    var nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-                    nativeTextAreaValueSetter.call(inputElement, \`${prompt}\`);
-                    const inputEvent = new Event('input', { bubbles: true });
-                    inputElement.dispatchEvent(inputEvent);
-                }
-            }
-        `);
+      ((prompt) => {
+        const inputElement = document.querySelector('textarea');
+        if (inputElement) {
+          const span = inputElement.previousElementSibling;
+          if (span) {
+            span.classList.add('hidden');
+          }
+          const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype,
+            'value',
+          )?.set;
+          nativeTextAreaValueSetter?.call(inputElement, prompt);
+          const inputEvent = new Event('input', { bubbles: true });
+          inputElement.dispatchEvent(inputEvent);
+        }
+      })(${JSON.stringify(prompt)});
+    `);
   } else if (view.id && view.id.match("deepseek")) {
     view.webContents.executeJavaScript(`
-            {
-                var inputElement = document.querySelector('textarea');
-                if (inputElement) {
-                    var nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-                    nativeTextAreaValueSetter.call(inputElement, \`${prompt}\`);
-                    const inputEvent = new Event('input', { bubbles: true });
-                    inputElement.dispatchEvent(inputEvent);
-                }
-            }
-        `);
+      ((prompt) => {
+        const inputElement = document.querySelector('textarea');
+        if (inputElement) {
+          const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype,
+            'value',
+          )?.set;
+          nativeTextAreaValueSetter?.call(inputElement, prompt);
+          const inputEvent = new Event('input', { bubbles: true });
+          inputElement.dispatchEvent(inputEvent);
+        }
+      })(${JSON.stringify(prompt)});
+    `);
   } else if (view.id && view.id.match("lmarena")) {
     view.webContents.executeJavaScript(`
-            {
-                var inputElement = document.querySelector('textarea');
-                if (inputElement) {
-                    var nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-                    nativeTextAreaValueSetter.call(inputElement, \`${prompt}\`);
-                    const inputEvent = new Event('input', { bubbles: true });
-                    inputElement.dispatchEvent(inputEvent);
-                }
+      ((prompt) => {
+        const inputElement = document.querySelector('textarea');
+        if (inputElement) {
+          const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype,
+            'value',
+          )?.set;
+          nativeTextAreaValueSetter?.call(inputElement, prompt);
+          const inputEvent = new Event('input', { bubbles: true });
+          inputElement.dispatchEvent(inputEvent);
         }
+      })(${JSON.stringify(prompt)});
     `);
   }
 }
