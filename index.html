@@ -73,6 +73,16 @@
         box-shadow: var(--shadow);
       }
 
+      #prompt-area.drag-active {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.35);
+        background: linear-gradient(
+          135deg,
+          rgba(138, 180, 248, 0.12),
+          rgba(138, 180, 248, 0.05)
+        );
+      }
+
       #prompt-input {
         flex: 1;
         padding: 14px;

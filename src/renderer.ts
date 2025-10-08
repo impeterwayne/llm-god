@@ -2,6 +2,78 @@ const ipcRenderer = window.electron.ipcRenderer;
 
 let promptArea: HTMLElement | null = null;
 
+interface SerializedFile {
+  name: string;
+  type: string;
+  size: number;
+  lastModified: number;
+  data: string;
+}
+
+const removeDragActiveState = (): void => {
+  promptArea?.classList.remove("drag-active");
+};
+
+const serializeFileForTransfer = (file: File): Promise<SerializedFile> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const result = reader.result;
+
+      if (result instanceof ArrayBuffer) {
+        const bytes = new Uint8Array(result);
+        let binary = "";
+
+        bytes.forEach((byte) => {
+          binary += String.fromCharCode(byte);
+        });
+
+        const base64 = btoa(binary);
+
+        resolve({
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          lastModified: file.lastModified,
+          data: base64,
+        });
+        return;
+      }
+
+      reject(new Error("Unexpected result while reading file"));
+    };
+
+    reader.onerror = () => {
+      reject(reader.error ?? new Error("Failed to read file"));
+    };
+
+    reader.readAsArrayBuffer(file);
+  });
+};
+
+const handleFileDrop = async (event: DragEvent): Promise<void> => {
+  event.preventDefault();
+  removeDragActiveState();
+
+  const droppedFiles = event.dataTransfer?.files;
+
+  if (!droppedFiles || droppedFiles.length === 0) {
+    return;
+  }
+
+  try {
+    const fileList = Array.from(droppedFiles);
+    const serializedFiles = await Promise.all(
+      fileList.map((file) => serializeFileForTransfer(file)),
+    );
+
+    await ipcRenderer.invoke("broadcast-file-drop", serializedFiles);
+  } catch (error) {
+    console.error("Error processing dropped files", error);
+  }
+};
+
 const notifyPromptAreaSize = (): void => {
   if (!promptArea) {
     return;
@@ -17,6 +89,53 @@ const initializePromptAreaObserver = (): void => {
   if (!promptArea) {
     return;
   }
+
+  promptArea.addEventListener("dragover", (event: DragEvent) => {
+    event.preventDefault();
+    if (!event.dataTransfer) {
+      return;
+    }
+
+    event.dataTransfer.dropEffect = "copy";
+    promptArea?.classList.add("drag-active");
+  });
+
+  promptArea.addEventListener("dragenter", (event: DragEvent) => {
+    event.preventDefault();
+    promptArea?.classList.add("drag-active");
+  });
+
+  promptArea.addEventListener("dragleave", () => {
+    removeDragActiveState();
+  });
+
+  promptArea.addEventListener("dragend", () => {
+    removeDragActiveState();
+  });
+
+  promptArea.addEventListener("drop", handleFileDrop);
+
+  window.addEventListener(
+    "drop",
+    (event: DragEvent) => {
+      if (!promptArea?.contains(event.target as Node)) {
+        event.preventDefault();
+        removeDragActiveState();
+      }
+    },
+    true,
+  );
+
+  window.addEventListener(
+    "dragover",
+    (event: DragEvent) => {
+      event.preventDefault();
+      if (!promptArea?.classList.contains("drag-active")) {
+        event.dataTransfer && (event.dataTransfer.dropEffect = "none");
+      }
+    },
+    true,
+  );
 
   const promptAreaObserver = new ResizeObserver(() => {
     notifyPromptAreaSize();

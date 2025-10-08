@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   ipcMain,
   IpcMainEvent,
+  IpcMainInvokeEvent,
   WebContentsView,
   nativeTheme,
   clipboard,
@@ -15,7 +16,9 @@ import {
   removeBrowserView,
   injectPromptIntoView,
   sendPromptInView,
+  simulateFileDropInView,
 } from "./utilities.js"; // Adjusted path
+import type { SerializedFile } from "./utilities.js";
 import { applyCustomStyles } from "./customStyles.js";
 import { createRequire } from "node:module"; // Import createRequire
 import { fileURLToPath } from "node:url"; // Import fileURLToPath
@@ -264,6 +267,23 @@ ipcMain.on("enter-prompt", (_: IpcMainEvent, prompt: string) => {
     injectPromptIntoView(view, prompt);
   });
 });
+
+ipcMain.handle(
+  "broadcast-file-drop",
+  async (_: IpcMainInvokeEvent, files: SerializedFile[]) => {
+    if (!Array.isArray(files) || files.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      views.map((view: CustomBrowserView) =>
+        simulateFileDropInView(view, files).catch((error) => {
+          console.error("Failed to deliver dropped files to view", view.id, error);
+        }),
+      ),
+    );
+  },
+);
 
 ipcMain.on("send-prompt", (_, prompt: string) => {
   // Added type for prompt (though unused here)

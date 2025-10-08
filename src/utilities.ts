@@ -5,6 +5,14 @@ interface CustomBrowserView extends WebContentsView {
   id?: string; // Make id optional as it's assigned after creation
 }
 
+export interface SerializedFile {
+  name: string;
+  type: string;
+  size: number;
+  lastModified: number;
+  data: string;
+}
+
 /**
  * Creates and configures a new BrowserView for the main window
  * @param mainWindow - The main Electron window
@@ -256,6 +264,373 @@ export function injectPromptIntoView(
       })(${JSON.stringify(prompt)});
     `);
   }
+}
+
+export async function simulateFileDropInView(
+  view: CustomBrowserView,
+  files: SerializedFile[],
+): Promise<void> {
+  if (!files.length) {
+    return;
+  }
+
+  const script = `
+    (async (files) => {
+      try {
+        const decodeBase64 = (base64) => {
+          const binary = atob(base64);
+          const length = binary.length;
+          const bytes = new Uint8Array(length);
+          for (let i = 0; i < length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          return bytes;
+        };
+
+        const createFile = (file) => {
+          const bytes = decodeBase64(file.data);
+          const blobParts = [bytes];
+          const options = {
+            type: file.type || "application/octet-stream",
+            lastModified: file.lastModified || Date.now(),
+          };
+          return new File(blobParts, file.name || "dropped-file", options);
+        };
+
+        const generatedFiles = files.map(createFile);
+
+        const createDataTransfer = () => {
+          const dataTransfer = new DataTransfer();
+          generatedFiles.forEach((file) => dataTransfer.items.add(file));
+          dataTransfer.dropEffect = "copy";
+          dataTransfer.effectAllowed = "copyMove";
+          return dataTransfer;
+        };
+
+        const siteSelectors = {
+          "chatgpt.com": [
+            '[data-testid="attachment-dropzone"]',
+            '[data-testid="drag-drop-container"]',
+            '[data-testid="file-upload"]',
+            '[data-testid="composer"] textarea',
+            'form textarea',
+            'textarea[data-id="prompt-textarea"]',
+          ],
+          "claude.ai": [
+            '.MessageComposerDropzone',
+            '[data-testid="chat-input-textarea"]',
+            'textarea',
+          ],
+          "gemini.google.com": [
+            '[aria-label="Drop files here"]',
+            'form [role="presentation"]',
+            '[contenteditable="true"][role="textbox"]',
+            '[contenteditable="true"][aria-label]',
+            '[contenteditable="true"]',
+            'textarea',
+          ],
+          "perplexity.ai": [
+            '#ask-input',
+            '[data-testid="dropzone"]',
+            '[data-testid="upload-dropzone"]',
+            '[data-testid="prompt-input"]',
+            'textarea',
+            '[contenteditable="true"]',
+          ],
+          "www.perplexity.ai": [
+            '#ask-input',
+            '[data-testid="dropzone"]',
+            '[data-testid="upload-dropzone"]',
+            '[data-testid="prompt-input"]',
+            'textarea',
+            '[contenteditable="true"]',
+          ],
+          "grok.com": [
+            'textarea',
+            '[contenteditable="true"]',
+          ],
+          "chat.deepseek.com": [
+            'textarea',
+            '[contenteditable="true"]',
+          ],
+          "deepseek.com": [
+            'textarea',
+            '[contenteditable="true"]',
+          ],
+          "lmarena.ai": [
+            'textarea',
+            '[contenteditable="true"]',
+          ],
+        };
+
+        const normalizedHost = location.hostname.replace(/^www\./, "");
+        const hostSelectors =
+          siteSelectors[location.hostname] ||
+          siteSelectors[normalizedHost] ||
+          [];
+
+        const hostsRequiringInputSync = new Set([
+          'perplexity.ai',
+          'www.perplexity.ai',
+          'gemini.google.com',
+        ]);
+
+        const shouldForceInputSync =
+          hostsRequiringInputSync.has(location.hostname) ||
+          hostsRequiringInputSync.has(normalizedHost);
+
+        const fallbackSelectors = [
+          '[data-testid="prompt-input"]',
+          '.composer',
+          '[role="textbox"]',
+          'form',
+          'main',
+          'body',
+        ];
+
+        const selectors = [...hostSelectors, ...fallbackSelectors];
+
+        const candidateTargets = [];
+        const seen = new Set();
+
+        const addCandidate = (element) => {
+          if (element && element instanceof Element && !seen.has(element)) {
+            seen.add(element);
+            candidateTargets.push(element);
+          }
+        };
+
+        selectors.forEach((selector) => {
+          if (selector === 'body') {
+            addCandidate(document.body);
+            return;
+          }
+
+          const matches = Array.from(document.querySelectorAll(selector));
+          matches.forEach(addCandidate);
+        });
+
+        if (!candidateTargets.length) {
+          addCandidate(document.body);
+        }
+
+        const prioritizedTargets = candidateTargets
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            const area = rect.width * rect.height;
+            let weight = Number.isFinite(rect.bottom) ? rect.bottom : 0;
+
+            if (area <= 0) {
+              weight -= 5000;
+            } else {
+              weight += Math.min(area, 400000) / 100;
+            }
+
+            if (element.matches?.('textarea, [contenteditable="true"], input[type="file"]')) {
+              weight += 6000;
+            }
+
+            const testId = (element.getAttribute?.('data-testid') || '').toLowerCase();
+            if (testId.includes('drop') || testId.includes('upload')) {
+              weight += 5000;
+            }
+
+            const ariaLabel = (element.getAttribute?.('aria-label') || '').toLowerCase();
+            if (ariaLabel.includes('drop') || ariaLabel.includes('upload')) {
+              weight += 3000;
+            }
+
+            return { element, weight };
+          })
+          .sort((a, b) => b.weight - a.weight)
+          .map((entry) => entry.element);
+
+        const targetsToTry = prioritizedTargets.length
+          ? prioritizedTargets
+          : [document.body, document.documentElement].filter(
+              (el) => el instanceof Element
+            );
+
+        const computeCoordinates = (target) => {
+          const fallbackX = window.innerWidth / 2;
+          const fallbackY = window.innerHeight / 2;
+
+          if (!(target instanceof Element)) {
+            return {
+              clientX: fallbackX,
+              clientY: fallbackY,
+              pageX: fallbackX + window.scrollX,
+              pageY: fallbackY + window.scrollY,
+              screenX: window.screenX + fallbackX,
+              screenY: window.screenY + fallbackY,
+            };
+          }
+
+          const rect = target.getBoundingClientRect();
+          const rectWidth = rect.width || 0;
+          const rectHeight = rect.height || 0;
+          const clientX = Number.isFinite(rect.left)
+            ? rect.left + Math.min(rectWidth / 2, 200)
+            : fallbackX;
+          const clientY = Number.isFinite(rect.top)
+            ? rect.top + Math.min(rectHeight / 2, 200)
+            : fallbackY;
+          return {
+            clientX,
+            clientY,
+            pageX: clientX + window.scrollX,
+            pageY: clientY + window.scrollY,
+            screenX: window.screenX + clientX,
+            screenY: window.screenY + clientY,
+          };
+        };
+
+        const dispatchDragEvent = (type, target, dataTransfer, overrides = {}) => {
+          if (!target || typeof target.dispatchEvent !== 'function') {
+            return false;
+          }
+
+          const coordinates = computeCoordinates(target);
+          const event = new DragEvent(type, {
+            dataTransfer,
+            bubbles: true,
+            cancelable: type !== 'dragend',
+            composed: true,
+            ...coordinates,
+            ...overrides,
+          });
+
+          target.dispatchEvent(event);
+          return event.defaultPrevented;
+        };
+
+        const runDragSequence = (target, dataTransfer) => {
+          const ancestors = [];
+          let current = target instanceof Element ? target : null;
+
+          while (current) {
+            ancestors.push(current);
+            current = current.parentElement;
+          }
+
+          const path = ancestors.slice().reverse();
+
+          path.forEach((element) => {
+            dispatchDragEvent('dragenter', element, dataTransfer);
+            dispatchDragEvent('dragover', element, dataTransfer);
+          });
+
+          const dropPrevented = dispatchDragEvent('drop', target, dataTransfer);
+
+          ancestors.forEach((element) => {
+            dispatchDragEvent('dragleave', element, dataTransfer, { cancelable: false });
+          });
+
+          const globalTargets = [document.body, document.documentElement].filter(
+            (element) => element instanceof Element,
+          );
+
+          globalTargets.forEach((element) => {
+            dispatchDragEvent('dragleave', element, dataTransfer, { cancelable: false });
+          });
+
+          dispatchDragEvent('dragend', target, dataTransfer, { cancelable: false });
+
+          return dropPrevented;
+        };
+
+        const syncFileInputs = (target, dataTransfer) => {
+          const inputElements = new Set();
+          if (target instanceof HTMLElement) {
+            target
+              .querySelectorAll('input[type="file"]')
+              .forEach((element) => inputElements.add(element));
+          }
+
+          document
+            .querySelectorAll('input[type="file"]')
+            .forEach((element) => inputElements.add(element));
+
+          if (!inputElements.size) {
+            return false;
+          }
+
+          const filesDescriptor = Object.getOwnPropertyDescriptor(
+            HTMLInputElement.prototype,
+            'files',
+          );
+
+          let updated = false;
+
+          inputElements.forEach((input) => {
+            if (!(input instanceof HTMLInputElement)) {
+              return;
+            }
+
+            if (filesDescriptor?.set) {
+              filesDescriptor.set.call(input, dataTransfer.files);
+            } else {
+              Object.defineProperty(input, 'files', {
+                configurable: true,
+                get: () => dataTransfer.files,
+              });
+            }
+
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            updated = true;
+          });
+
+          return updated;
+        };
+
+        const attemptDrop = (target) => {
+          const dataTransfer = createDataTransfer();
+          const dropPrevented = runDragSequence(target, dataTransfer);
+          let synced = false;
+
+          if (!dropPrevented || shouldForceInputSync) {
+            synced = syncFileInputs(target, dataTransfer);
+            if (synced) {
+              return true;
+            }
+          }
+
+          if (dropPrevented && !shouldForceInputSync) {
+            return true;
+          }
+
+          return synced;
+        };
+
+        for (const target of targetsToTry) {
+          try {
+            if (attemptDrop(target)) {
+              return true;
+            }
+          } catch (error) {
+            console.warn('Drop attempt failed on target', target, error);
+          }
+        }
+
+        return false;
+      } catch (error) {
+        console.error('Failed to simulate drag-and-drop', error);
+        return false;
+      }
+    })(%files%);
+  `;
+
+  const scriptWithFiles = script.replace(
+    "%files%",
+    JSON.stringify(files),
+  );
+
+  await view.webContents
+    .executeJavaScript(scriptWithFiles, true)
+    .catch((error) => {
+      console.error("Failed to execute drag-and-drop simulation", error);
+    });
 }
 
 export function sendPromptInView(view: CustomBrowserView) {

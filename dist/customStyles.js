@@ -1,7 +1,3 @@
-import { app } from "electron";
-import fs from "node:fs";
-import path from "node:path";
-const CONFIG_FILENAME = "custom-styles.json";
 const LLM_HOST_PATTERNS = {
     chatgpt: /^https?:\/\/(?:www\.)?(?:chat\.openai\.com|chatgpt\.com)(?:[\/?#].*|$)/i,
     gemini: /^https?:\/\/gemini\.google\.com(?:[\/?#].*|$)/i,
@@ -21,32 +17,12 @@ const BUILT_IN_MATCH_GROUPS = {
     "@grok": [LLM_HOST_PATTERNS.grok],
     "@deepseek": [LLM_HOST_PATTERNS.deepseek],
 };
-let configPath;
 let cachedStyles = [];
-let cachedConfigMTime = 0;
 const appliedStyles = new WeakMap();
 const darkModeApplied = new WeakSet();
-function getConfigPath() {
-    if (!configPath) {
-        configPath = path.join(app.getPath("userData"), CONFIG_FILENAME);
-    }
-    return configPath;
-}
 const HEADING_TINT_COMMENT = "Example: tint headings on all bundled LLM tabs";
 function getDefaultStyles() {
-    const sharedHeadingSelectors = `h1,
-h2,
-h3,
-h4,
-h5,
-h6,
-strong,
-b { color: #58aefd !important; }`;
-    return [
-        {
-            match: "@chatgpt",
-            css: `/* ${HEADING_TINT_COMMENT} */
-h1,
+    const headingSelectors = `h1,
 h2,
 h3,
 h4,
@@ -55,99 +31,15 @@ h6,
 strong,
 b,
 .font-semibold,
-[class*="font-bold"] { color: #58aefd !important; }
-`,
-        },
+[class*="font-bold"] { color: #58aefd !important; }`;
+    return [
         {
-            match: "@gemini",
+            match: "@llms",
             css: `/* ${HEADING_TINT_COMMENT} */
-${sharedHeadingSelectors}
-`,
-        },
-        {
-            match: "@perplexity",
-            css: `/* ${HEADING_TINT_COMMENT} */
-${sharedHeadingSelectors}
-`,
-        },
-        {
-            match: "@claude",
-            css: `/* ${HEADING_TINT_COMMENT} */
-${sharedHeadingSelectors}
-`,
-        },
-        {
-            match: "@grok",
-            css: `/* ${HEADING_TINT_COMMENT} */
-${sharedHeadingSelectors}
-`,
-        },
-        {
-            match: "@deepseek",
-            css: `/* ${HEADING_TINT_COMMENT} */
-${sharedHeadingSelectors}
-`,
-        },
-        {
-            match: "@lmarena",
-            css: `/* ${HEADING_TINT_COMMENT} */
-${sharedHeadingSelectors}
+${headingSelectors}
 `,
         },
     ];
-}
-function ensureConfigFile(filePath) {
-    if (fs.existsSync(filePath)) {
-        return;
-    }
-    const defaults = getDefaultStyles();
-    const payload = { styles: defaults };
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf8");
-}
-function readRawConfig(filePath) {
-    ensureConfigFile(filePath);
-    const fileContents = fs.readFileSync(filePath, "utf8");
-    try {
-        const parsed = JSON.parse(fileContents);
-        if (!Array.isArray(parsed.styles)) {
-            return [];
-        }
-        return upgradeLegacyConfig(filePath, parsed.styles).filter((entry) => typeof entry?.match === "string" && typeof entry?.css === "string");
-    }
-    catch (error) {
-        console.warn("Failed to parse custom style configuration", error);
-        return [];
-    }
-}
-function upgradeLegacyConfig(filePath, styles) {
-    const legacyGeminiMatcher = "^https?:\\/\\/gemini\\.google\\.com\\/";
-    let requiresRewrite = false;
-    const migrated = styles.map((style) => {
-        if (style.match === legacyGeminiMatcher &&
-            /Example:\s*tint headings/i.test(style.css)) {
-            requiresRewrite = true;
-            return { ...style, match: "@llms" };
-        }
-        return style;
-    });
-    if (migrated.length === 1 &&
-        migrated[0]?.match === "@llms" &&
-        typeof migrated[0]?.css === "string" &&
-        new RegExp(HEADING_TINT_COMMENT, "i").test(migrated[0].css) &&
-        /color:\s*#58aefd/i.test(migrated[0].css)) {
-        requiresRewrite = true;
-        migrated.splice(0, migrated.length, ...getDefaultStyles());
-    }
-    if (requiresRewrite) {
-        try {
-            fs.writeFileSync(filePath, JSON.stringify({ styles: migrated }, null, 2), "utf8");
-        }
-        catch (error) {
-            console.warn("Unable to upgrade custom style configuration", error);
-        }
-    }
-    return migrated;
 }
 function expandMatchers(match) {
     const trimmed = match.trim();
@@ -177,23 +69,8 @@ function compileStyles(definitions) {
     return compiled;
 }
 function getCompiledStyles() {
-    const filePath = getConfigPath();
-    try {
-        const stats = fs.statSync(filePath);
-        if (stats.mtimeMs !== cachedConfigMTime) {
-            cachedStyles = compileStyles(readRawConfig(filePath));
-            cachedConfigMTime = stats.mtimeMs;
-        }
-    }
-    catch (error) {
-        if (error.code === "ENOENT") {
-            ensureConfigFile(filePath);
-            cachedStyles = compileStyles(getDefaultStyles());
-            cachedConfigMTime = Date.now();
-        }
-        else {
-            console.warn("Unable to load custom style configuration", error);
-        }
+    if (cachedStyles.length === 0) {
+        cachedStyles = compileStyles(getDefaultStyles());
     }
     return cachedStyles;
 }

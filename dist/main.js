@@ -1,8 +1,8 @@
-import { app, BrowserWindow, ipcMain, WebContentsView, nativeTheme, } from "electron";
+import { app, BrowserWindow, ipcMain, WebContentsView, nativeTheme, clipboard, } from "electron";
 import * as remote from "@electron/remote/main/index.js";
 import path from "path";
 import electronLocalShortcut from "electron-localshortcut";
-import { addBrowserView, removeBrowserView, injectPromptIntoView, sendPromptInView, } from "./utilities.js"; // Adjusted path
+import { addBrowserView, removeBrowserView, injectPromptIntoView, sendPromptInView, simulateFileDropInView, } from "./utilities.js"; // Adjusted path
 import { applyCustomStyles } from "./customStyles.js";
 import { createRequire } from "node:module"; // Import createRequire
 import { fileURLToPath } from "node:url"; // Import fileURLToPath
@@ -16,6 +16,8 @@ let mainWindow;
 let formWindow; // Allow formWindow to be null
 let pendingRowSelectedKey = null; // Store the key of the selected row for later use
 const views = [];
+let promptAreaHeight = 0;
+let browserViewsInitialized = false;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // require("electron-reload")(path.join(__dirname, "."));
@@ -24,24 +26,31 @@ const websites = [
     "https://gemini.google.com/",
     "https://www.perplexity.ai/",
 ];
-function createWindow() {
-    mainWindow = new BrowserWindow({
-        width: 2000,
-        height: 1100,
-        center: true,
-        backgroundColor: "#000000",
-        webPreferences: {
-            preload: path.join(__dirname, "preload.cjs"), // This will point to dist/preload.js at runtime
-            nodeIntegration: true,
-            contextIsolation: false,
-            offscreen: false,
-        },
+async function adjustBrowserViewBounds() {
+    if (!mainWindow) {
+        return;
+    }
+    const { width, height } = mainWindow.getContentBounds();
+    const availableHeight = Math.max(height - promptAreaHeight, 0);
+    const viewWidth = websites.length > 0 ? Math.floor(width / websites.length) : width;
+    views.forEach((view, index) => {
+        view.setBounds({
+            x: index * viewWidth,
+            y: 0,
+            width: viewWidth,
+            height: availableHeight,
+        });
     });
-    remote.enable(mainWindow.webContents);
-    mainWindow.loadFile(path.join(__dirname, "..", "index.html")); // Changed to point to root index.html
-    // mainWindow.webContents.openDevTools({ mode: "detach" });
-    const viewWidth = Math.floor(mainWindow.getBounds().width / websites.length);
-    const { height } = mainWindow.getBounds();
+}
+async function initializeBrowserViews() {
+    if (!mainWindow || browserViewsInitialized) {
+        await adjustBrowserViewBounds();
+        return;
+    }
+    const { width, height } = mainWindow.getContentBounds();
+    const viewWidth = websites.length > 0 ? Math.floor(width / websites.length) : width;
+    const availableHeight = Math.max(height - promptAreaHeight, 0);
+    browserViewsInitialized = true;
     websites.forEach((url, index) => {
         const view = new WebContentsView({
             webPreferences: {
@@ -55,15 +64,41 @@ function createWindow() {
             x: index * viewWidth,
             y: 0,
             width: viewWidth,
-            height: height - 235,
+            height: availableHeight,
         });
-        // view.webContents.openDevTools({ mode: "detach" });
         view.webContents.setZoomFactor(1);
         applyCustomStyles(view.webContents);
         view.webContents.loadURL(url);
         views.push(view);
     });
+    await adjustBrowserViewBounds();
+    updateZoomFactor();
+}
+function createWindow() {
+    mainWindow = new BrowserWindow({
+        width: 2000,
+        height: 1100,
+        center: true,
+        backgroundColor: "#000000",
+        autoHideMenuBar: true,
+        webPreferences: {
+            preload: path.join(__dirname, "preload.cjs"), // This will point to dist/preload.js at runtime
+            nodeIntegration: true,
+            contextIsolation: false,
+            offscreen: false,
+        },
+    });
+    remote.enable(mainWindow.webContents);
+    mainWindow.setMenuBarVisibility(false);
+    mainWindow.removeMenu();
+    mainWindow.loadFile(path.join(__dirname, "..", "index.html")); // Changed to point to root index.html
+    // mainWindow.webContents.openDevTools({ mode: "detach" });
     mainWindow.on("enter-full-screen", () => {
+        void adjustBrowserViewBounds();
+        updateZoomFactor();
+    });
+    mainWindow.on("leave-full-screen", () => {
+        void adjustBrowserViewBounds();
         updateZoomFactor();
     });
     mainWindow.on("focus", () => {
@@ -73,18 +108,12 @@ function createWindow() {
     mainWindow.on("resize", () => {
         clearTimeout(resizeTimeout);
         resizeTimeout = setTimeout(() => {
-            const { width, height } = mainWindow.getBounds();
-            const viewWidth = Math.floor(width / websites.length);
-            views.forEach((view, index) => {
-                view.setBounds({
-                    x: index * viewWidth,
-                    y: 0,
-                    width: viewWidth,
-                    height: height - 200,
-                });
-            });
+            void adjustBrowserViewBounds();
             updateZoomFactor();
         }, 200);
+    });
+    mainWindow.webContents.once("did-finish-load", () => {
+        void initializeBrowserViews();
     });
 }
 function createFormWindow() {
@@ -117,6 +146,20 @@ app.on("window-all-closed", () => {
     if (process.platform !== "darwin")
         app.quit();
 });
+ipcMain.on("prompt-area-size", (_, height) => {
+    const normalizedHeight = Math.max(0, Math.round(height));
+    if (normalizedHeight === promptAreaHeight) {
+        return;
+    }
+    promptAreaHeight = normalizedHeight;
+    if (browserViewsInitialized) {
+        void adjustBrowserViewBounds();
+        updateZoomFactor();
+    }
+    else {
+        void initializeBrowserViews();
+    }
+});
 ipcMain.on("open-form-window", () => {
     createFormWindow();
 });
@@ -125,6 +168,18 @@ ipcMain.on("close-form-window", () => {
         formWindow.close();
         formWindow = null; // Clear the reference
     }
+});
+ipcMain.handle("get-current-urls", () => {
+    return views.map((view) => {
+        const currentUrl = view.webContents.getURL();
+        if (currentUrl && currentUrl.length > 0) {
+            return currentUrl;
+        }
+        return view.id ?? "";
+    });
+});
+ipcMain.on("copy-to-clipboard", (_, text) => {
+    clipboard.writeText(text ?? "");
 });
 ipcMain.on("save-prompt", (event, promptValue) => {
     const timestamp = new Date().getTime().toString();
@@ -146,6 +201,14 @@ ipcMain.on("enter-prompt", (_, prompt) => {
     views.forEach((view) => {
         injectPromptIntoView(view, prompt);
     });
+});
+ipcMain.handle("broadcast-file-drop", async (_, files) => {
+    if (!Array.isArray(files) || files.length === 0) {
+        return;
+    }
+    await Promise.all(views.map((view) => simulateFileDropInView(view, files).catch((error) => {
+        console.error("Failed to deliver dropped files to view", view.id, error);
+    })));
 });
 ipcMain.on("send-prompt", (_, prompt) => {
     // Added type for prompt (though unused here)
@@ -171,7 +234,8 @@ ipcMain.on("open-lm-arena", (_, prompt) => {
     if (prompt === "open lm arena now") {
         console.log("Opening LMArena");
         let url = "https://lmarena.ai/?mode=direct";
-        addBrowserView(mainWindow, url, websites, views);
+        addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+        void adjustBrowserViewBounds();
     }
 });
 ipcMain.on("close-lm-arena", (_, prompt) => {
@@ -179,7 +243,8 @@ ipcMain.on("close-lm-arena", (_, prompt) => {
         console.log("Closing LMArena");
         const lmArenaView = views.find((view) => view.id.match("lmarena"));
         if (lmArenaView) {
-            removeBrowserView(mainWindow, lmArenaView, websites, views);
+            removeBrowserView(mainWindow, lmArenaView, websites, views, { promptAreaHeight });
+            void adjustBrowserViewBounds();
         }
     }
 });
@@ -187,7 +252,8 @@ ipcMain.on("open-claude", (_, prompt) => {
     if (prompt === "open claude now") {
         console.log("Opening Claude");
         let url = "https://claude.ai/chats/";
-        addBrowserView(mainWindow, url, websites, views);
+        addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+        void adjustBrowserViewBounds();
     }
 });
 ipcMain.on("close-claude", (_, prompt) => {
@@ -195,7 +261,8 @@ ipcMain.on("close-claude", (_, prompt) => {
         console.log("Closing Claude");
         const claudeView = views.find((view) => view.id.match("claude"));
         if (claudeView) {
-            removeBrowserView(mainWindow, claudeView, websites, views);
+            removeBrowserView(mainWindow, claudeView, websites, views, { promptAreaHeight });
+            void adjustBrowserViewBounds();
         }
     }
 });
@@ -203,7 +270,8 @@ ipcMain.on("open-grok", (_, prompt) => {
     if (prompt === "open grok now") {
         console.log("Opening Grok");
         let url = "https://grok.com/";
-        addBrowserView(mainWindow, url, websites, views);
+        addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+        void adjustBrowserViewBounds();
     }
 });
 ipcMain.on("close-grok", (_, prompt) => {
@@ -211,7 +279,8 @@ ipcMain.on("close-grok", (_, prompt) => {
         console.log("Closing Grok");
         const grokView = views.find((view) => view.id.match("grok"));
         if (grokView) {
-            removeBrowserView(mainWindow, grokView, websites, views);
+            removeBrowserView(mainWindow, grokView, websites, views, { promptAreaHeight });
+            void adjustBrowserViewBounds();
         }
     }
 });
@@ -219,7 +288,8 @@ ipcMain.on("open-deepseek", (_, prompt) => {
     if (prompt === "open deepseek now") {
         console.log("Opening DeepSeek");
         let url = "https://chat.deepseek.com/";
-        addBrowserView(mainWindow, url, websites, views);
+        addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+        void adjustBrowserViewBounds();
     }
 });
 ipcMain.on("close-deepseek", (_, prompt) => {
@@ -227,7 +297,8 @@ ipcMain.on("close-deepseek", (_, prompt) => {
         console.log("Closing Deepseek");
         const deepseekView = views.find((view) => view.id.match("deepseek"));
         if (deepseekView) {
-            removeBrowserView(mainWindow, deepseekView, websites, views);
+            removeBrowserView(mainWindow, deepseekView, websites, views, { promptAreaHeight });
+            void adjustBrowserViewBounds();
         }
     }
 });
