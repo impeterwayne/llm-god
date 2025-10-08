@@ -1,4 +1,5 @@
 import { WebContentsView } from "electron"; // Added WebPreferences type
+import { applyCustomStyles } from "./customStyles.js";
 /**
  * Creates and configures a new BrowserView for the main window
  * @param mainWindow - The main Electron window
@@ -37,6 +38,7 @@ export function addBrowserView(mainWindow, url, websites, views, webPreferences 
         height: height - 235,
     });
     view.webContents.setZoomFactor(1.5);
+    applyCustomStyles(view.webContents);
     view.webContents.loadURL(url);
     views.push(view);
     return view;

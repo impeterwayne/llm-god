@@ -4,6 +4,7 @@ import {
   ipcMain,
   IpcMainEvent,
   WebContentsView,
+  nativeTheme,
 } from "electron";
 import * as remote from "@electron/remote/main/index.js";
 import path from "path";
@@ -14,6 +15,7 @@ import {
   injectPromptIntoView,
   sendPromptInView,
 } from "./utilities.js"; // Adjusted path
+import { applyCustomStyles } from "./customStyles.js";
 import { createRequire } from "node:module"; // Import createRequire
 import { fileURLToPath } from "node:url"; // Import fileURLToPath
 import Store from "electron-store"; // Import electron-store
@@ -85,6 +87,7 @@ function createWindow(): void {
     });
     // view.webContents.openDevTools({ mode: "detach" });
     view.webContents.setZoomFactor(1);
+    applyCustomStyles(view.webContents);
     view.webContents.loadURL(url);
 
     views.push(view);
@@ -140,8 +143,10 @@ function updateZoomFactor(): void {
   });
 }
 
-app.whenReady().then(createWindow);
 app.whenReady().then(() => {
+  nativeTheme.themeSource = "dark";
+  createWindow();
+
   electronLocalShortcut.register(mainWindow, "Ctrl+W", () => {
     app.quit();
   });

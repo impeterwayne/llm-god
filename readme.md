@@ -38,6 +38,35 @@ To launch the prompt to all the LLM's, press Ctrl + Enter on your keyboard
 
 If you want to close the app, press Ctrl + W on your keyboard.
 
+### Custom styling (no browser extensions required)
+
+LLM-God now ships with an optional `custom-styles.json` file that lives next to the app's settings inside Electron's user data folder (for example `%APPDATA%/llm-god/custom-styles.json` on Windows). Each entry in that file contains a regular-expression `match` string and the raw CSS that should be injected into any embedded browser tab whose URL matches the expression. You can use aliases such as `"@llms"` to target every bundled LLM domain at once, but the default configuration now demonstrates per-site overrides with the dedicated aliases (`"@chatgpt"`, `"@gemini"`, `"@perplexity"`, `"@claude"`, `"@grok"`, `"@deepseek"`, and `"@lmarena"`) so you can tailor selectors without needing Stylus or any other extension.
+
+```jsonc
+{
+  "styles": [
+    {
+      "match": "@chatgpt",
+      "css": "/* Example: tint headings on all bundled LLM tabs */\n      h1, h2, h3, h4, h5, h6, strong, b, .font-semibold, [class*=\"font-bold\"] { color: #58aefd !important; }"
+    },
+    {
+      "match": "@gemini",
+      "css": "/* Example: tint headings on all bundled LLM tabs */\n      h1, h2, h3, h4, h5, h6, strong, b { color: #58aefd !important; }"
+    },
+    {
+      "match": "perplexity.ai",
+      "css": "body { font-family: 'Fira Code', monospace; }"
+    }
+  ]
+}
+```
+
+The JSON file is re-read whenever it changes, so you can keep the app running while experimenting with new CSS snippets. Invalid regular expressions are ignored and reported to the console in the Electron main process; unknown aliases are also logged so you can fix any typos.
+
+### Dark mode defaults
+
+LLM-God forces the embedded Chromium engine into dark mode, so each LLM website sees `prefers-color-scheme: dark` and automatically renders its dark theme when available.
+
 ## Disclaimer
 
 I did find out about the [GodMode](https://github.com/smol-ai/GodMode) project, but I felt that people needed an app that just provided the models from the few big companies like OpenAI and Anthropic. Many of the other smaller models are not very useful. In addition, that project doesn't seem to be very well maintained anymore and doesn't have some of the new models like Grok.

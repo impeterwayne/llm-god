@@ -1,4 +1,5 @@
 import { BrowserWindow, WebPreferences, WebContentsView } from "electron"; // Added WebPreferences type
+import { applyCustomStyles } from "./customStyles.js";
 
 interface CustomBrowserView extends WebContentsView {
   id?: string; // Make id optional as it's assigned after creation
@@ -54,6 +55,7 @@ export function addBrowserView(
   });
 
   view.webContents.setZoomFactor(1.5);
+  applyCustomStyles(view.webContents);
   view.webContents.loadURL(url);
   
 
