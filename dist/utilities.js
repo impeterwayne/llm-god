@@ -1,5 +1,67 @@
 import { WebContentsView } from "electron"; // Added WebPreferences type
 import { applyCustomStyles } from "./customStyles.js";
+export function ensureDetachedDevTools(view) {
+    const devToolsEvents = [
+        "did-finish-load",
+        "dom-ready",
+        "did-frame-finish-load",
+    ];
+    let devToolsRetryInterval;
+    const startDevToolsRetryInterval = () => {
+        if (!devToolsRetryInterval) {
+            devToolsRetryInterval = setInterval(() => {
+                attemptOpenDevTools();
+            }, 1000);
+        }
+    };
+    const stopDevToolsRetryInterval = () => {
+        if (devToolsRetryInterval) {
+            clearInterval(devToolsRetryInterval);
+            devToolsRetryInterval = undefined;
+        }
+    };
+    const attemptOpenDevTools = () => {
+        if (view.webContents.isDestroyed()) {
+            stopDevToolsRetryInterval();
+            return;
+        }
+        if (view.webContents.isDevToolsOpened()) {
+            stopDevToolsRetryInterval();
+            return;
+        }
+        startDevToolsRetryInterval();
+        try {
+            view.webContents.openDevTools({ mode: "detach" });
+        }
+        catch (error) {
+            console.warn("Failed to open devtools for view", view.id, error);
+        }
+    };
+    const handleLifecycleEvent = () => {
+        attemptOpenDevTools();
+    };
+    const handleDevToolsOpened = () => {
+        stopDevToolsRetryInterval();
+    };
+    const handleDevToolsClosed = () => {
+        startDevToolsRetryInterval();
+        attemptOpenDevTools();
+    };
+    devToolsEvents.forEach((event) => {
+        view.webContents.on(event, handleLifecycleEvent);
+    });
+    view.webContents.on("devtools-opened", handleDevToolsOpened);
+    view.webContents.on("devtools-closed", handleDevToolsClosed);
+    view.webContents.once("destroyed", () => {
+        devToolsEvents.forEach((event) => {
+            view.webContents.removeListener(event, handleLifecycleEvent);
+        });
+        view.webContents.removeListener("devtools-opened", handleDevToolsOpened);
+        view.webContents.removeListener("devtools-closed", handleDevToolsClosed);
+        stopDevToolsRetryInterval();
+    });
+    attemptOpenDevTools();
+}
 /**
  * Creates and configures a new BrowserView for the main window
  * @param mainWindow - The main Electron window
@@ -42,6 +104,7 @@ export function addBrowserView(mainWindow, url, websites, views, options = {}) {
     view.webContents.setZoomFactor(1.5);
     applyCustomStyles(view.webContents);
     view.webContents.loadURL(url);
+    ensureDetachedDevTools(view);
     views.push(view);
     return view;
 }
@@ -257,13 +320,20 @@ export async function simulateFileDropInView(view, files) {
 
         const generatedFiles = files.map(createFile);
 
-        const createDataTransfer = () => {
-          const dataTransfer = new DataTransfer();
-          generatedFiles.forEach((file) => dataTransfer.items.add(file));
-          dataTransfer.dropEffect = "copy";
-          dataTransfer.effectAllowed = "copyMove";
-          return dataTransfer;
+        const buildDataTransfer = () => {
+          const transfer = new DataTransfer();
+          generatedFiles.forEach((file) => transfer.items.add(file));
+          try {
+            transfer.effectAllowed = "copy";
+            transfer.dropEffect = "copy";
+          } catch (error) {
+            // Some browsers restrict assigning these properties
+          }
+          return transfer;
         };
+
+        const createDataTransfer = () => buildDataTransfer();
+        const cloneFileList = () => buildDataTransfer().files;
 
         const siteSelectors = {
           "chatgpt.com": [
@@ -443,26 +513,67 @@ export async function simulateFileDropInView(view, files) {
           };
         };
 
+        const waitForNextFrame = () =>
+          new Promise((resolve) => {
+            const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 16));
+            raf(() => resolve());
+          });
+
         const dispatchDragEvent = (type, target, dataTransfer, overrides = {}) => {
           if (!target || typeof target.dispatchEvent !== 'function') {
             return false;
           }
 
+          try {
+            if (dataTransfer) {
+              dataTransfer.effectAllowed = 'copy';
+              if (type === 'dragover' || type === 'drop') {
+                dataTransfer.dropEffect = overrides.dropEffect || 'copy';
+              }
+            }
+          } catch (error) {
+            // Ignore assignment restrictions
+          }
+
           const coordinates = computeCoordinates(target);
+          const isCancelable =
+            type === 'dragenter' || type === 'dragover' || type === 'drop';
+
           const event = new DragEvent(type, {
             dataTransfer,
             bubbles: true,
-            cancelable: type !== 'dragend',
+            cancelable: overrides.cancelable ?? isCancelable,
             composed: true,
+            buttons: 1,
+            button: 0,
             ...coordinates,
             ...overrides,
           });
+
+          if (dataTransfer && (!event.dataTransfer || event.dataTransfer !== dataTransfer)) {
+            try {
+              Object.defineProperty(event, 'dataTransfer', {
+                configurable: true,
+                enumerable: true,
+                get: () => dataTransfer,
+              });
+            } catch (error) {
+              // Fallback for browsers that disallow redefining the property
+              if (!event.dataTransfer) {
+                try {
+                  Reflect.set(event, 'dataTransfer', dataTransfer);
+                } catch (setError) {
+                  // Unable to force the property; continue without throwing.
+                }
+              }
+            }
+          }
 
           target.dispatchEvent(event);
           return event.defaultPrevented;
         };
 
-        const runDragSequence = (target, dataTransfer) => {
+        const runDragSequence = async (target, dataTransfer) => {
           const ancestors = [];
           let current = target instanceof Element ? target : null;
 
@@ -473,31 +584,47 @@ export async function simulateFileDropInView(view, files) {
 
           const path = ancestors.slice().reverse();
 
-          path.forEach((element) => {
-            dispatchDragEvent('dragenter', element, dataTransfer);
-            dispatchDragEvent('dragover', element, dataTransfer);
-          });
-
-          const dropPrevented = dispatchDragEvent('drop', target, dataTransfer);
-
-          ancestors.forEach((element) => {
-            dispatchDragEvent('dragleave', element, dataTransfer, { cancelable: false });
-          });
-
-          const globalTargets = [document.body, document.documentElement].filter(
-            (element) => element instanceof Element,
+          const globalTargets = [document, document.documentElement, document.body].filter(
+            (element) => element && typeof element.dispatchEvent === 'function',
           );
 
-          globalTargets.forEach((element) => {
-            dispatchDragEvent('dragleave', element, dataTransfer, { cancelable: false });
-          });
+          for (const globalTarget of globalTargets) {
+            dispatchDragEvent('dragenter', globalTarget, dataTransfer);
+            await waitForNextFrame();
+            for (let i = 0; i < 3; i++) {
+              dispatchDragEvent('dragover', globalTarget, dataTransfer);
+              await waitForNextFrame();
+            }
+          }
+
+          for (const element of path) {
+            dispatchDragEvent('dragenter', element, dataTransfer);
+            await waitForNextFrame();
+            for (let i = 0; i < 5; i++) {
+              dispatchDragEvent('dragover', element, dataTransfer);
+              await waitForNextFrame();
+            }
+          }
+
+          const dropPrevented = dispatchDragEvent('drop', target, dataTransfer);
+          await waitForNextFrame();
+
+          for (let i = ancestors.length - 1; i >= 0; i--) {
+            dispatchDragEvent('dragleave', ancestors[i], dataTransfer, { cancelable: false });
+            await waitForNextFrame();
+          }
+
+          for (const globalTarget of globalTargets) {
+            dispatchDragEvent('dragleave', globalTarget, dataTransfer, { cancelable: false });
+            await waitForNextFrame();
+          }
 
           dispatchDragEvent('dragend', target, dataTransfer, { cancelable: false });
 
           return dropPrevented;
         };
 
-        const syncFileInputs = (target, dataTransfer) => {
+        const syncFileInputs = (target) => {
           const inputElements = new Set();
           if (target instanceof HTMLElement) {
             target
@@ -525,12 +652,14 @@ export async function simulateFileDropInView(view, files) {
               return;
             }
 
+            const fileList = cloneFileList();
+
             if (filesDescriptor?.set) {
-              filesDescriptor.set.call(input, dataTransfer.files);
+              filesDescriptor.set.call(input, fileList);
             } else {
               Object.defineProperty(input, 'files', {
                 configurable: true,
-                get: () => dataTransfer.files,
+                get: () => fileList,
               });
             }
 
@@ -542,28 +671,29 @@ export async function simulateFileDropInView(view, files) {
           return updated;
         };
 
-        const attemptDrop = (target) => {
+        const attemptDrop = async (target) => {
           const dataTransfer = createDataTransfer();
-          const dropPrevented = runDragSequence(target, dataTransfer);
+          const dropPrevented = await runDragSequence(target, dataTransfer);
           let synced = false;
 
           if (!dropPrevented || shouldForceInputSync) {
-            synced = syncFileInputs(target, dataTransfer);
+            synced = syncFileInputs(target);
             if (synced) {
-              return true;
+              return { success: true, dropPrevented, synced };
             }
           }
 
           if (dropPrevented && !shouldForceInputSync) {
-            return true;
+            return { success: true, dropPrevented, synced };
           }
 
-          return synced;
+          return { success: synced, dropPrevented, synced };
         };
 
         for (const target of targetsToTry) {
           try {
-            if (attemptDrop(target)) {
+            const { success } = await attemptDrop(target);
+            if (success) {
               return true;
             }
           } catch (error) {

@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, WebContentsView, nativeTheme, clipboard, }
 import * as remote from "@electron/remote/main/index.js";
 import path from "path";
 import electronLocalShortcut from "electron-localshortcut";
-import { addBrowserView, removeBrowserView, injectPromptIntoView, sendPromptInView, simulateFileDropInView, } from "./utilities.js"; // Adjusted path
+import { addBrowserView, removeBrowserView, injectPromptIntoView, sendPromptInView, simulateFileDropInView, ensureDetachedDevTools, } from "./utilities.js"; // Adjusted path
 import { applyCustomStyles } from "./customStyles.js";
 import { createRequire } from "node:module"; // Import createRequire
 import { fileURLToPath } from "node:url"; // Import fileURLToPath
@@ -69,6 +69,7 @@ async function initializeBrowserViews() {
         view.webContents.setZoomFactor(1);
         applyCustomStyles(view.webContents);
         view.webContents.loadURL(url);
+        ensureDetachedDevTools(view);
         views.push(view);
     });
     await adjustBrowserViewBounds();

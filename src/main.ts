@@ -17,6 +17,7 @@ import {
   injectPromptIntoView,
   sendPromptInView,
   simulateFileDropInView,
+  ensureDetachedDevTools,
 } from "./utilities.js"; // Adjusted path
 import type { SerializedFile } from "./utilities.js";
 import { applyCustomStyles } from "./customStyles.js";
@@ -104,6 +105,8 @@ async function initializeBrowserViews(): Promise<void> {
     view.webContents.setZoomFactor(1);
     applyCustomStyles(view.webContents);
     view.webContents.loadURL(url);
+
+    ensureDetachedDevTools(view);
 
     views.push(view);
   });
