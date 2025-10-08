@@ -19,8 +19,10 @@ export function addBrowserView(
   url: string,
   websites: string[],
   views: CustomBrowserView[],
-  webPreferences: WebPreferences = {},
+  options: { webPreferences?: WebPreferences; promptAreaHeight?: number } = {},
 ): CustomBrowserView {
+  const { webPreferences = {}, promptAreaHeight = 0 } = options;
+
   const view: CustomBrowserView = new WebContentsView({
     webPreferences: {
       nodeIntegration: false,
@@ -33,7 +35,8 @@ export function addBrowserView(
   view.id = url;
   mainWindow.contentView.addChildView(view);
 
-  const { width, height } = mainWindow.getBounds();
+  const { width, height } = mainWindow.getContentBounds();
+  const availableHeight = Math.max(height - promptAreaHeight, 0);
 
   websites.push(url);
   const viewWidth = Math.floor(width / websites.length);
@@ -43,7 +46,7 @@ export function addBrowserView(
       x: index * viewWidth,
       y: 0,
       width: viewWidth,
-      height: height - 235,
+      height: availableHeight,
     });
   });
 
@@ -51,7 +54,7 @@ export function addBrowserView(
     x: (websites.length - 1) * viewWidth,
     y: 0,
     width: viewWidth,
-    height: height - 235,
+    height: availableHeight,
   });
 
   view.webContents.setZoomFactor(1.5);
@@ -68,7 +71,10 @@ export function removeBrowserView(
   viewToRemove: CustomBrowserView, // Changed to viewToRemove for clarity
   websites: string[],
   views: CustomBrowserView[],
+  options: { promptAreaHeight?: number } = {},
 ): void {
+  const { promptAreaHeight = 0 } = options;
+
   const viewIndex = views.indexOf(viewToRemove);
   if (viewIndex === -1) return;
 
@@ -83,7 +89,8 @@ export function removeBrowserView(
 
   if (views.length === 0) return;
 
-  const { width, height } = mainWindow.getBounds();
+  const { width, height } = mainWindow.getContentBounds();
+  const availableHeight = Math.max(height - promptAreaHeight, 0);
   const viewWidth = Math.floor(width / views.length);
 
   views.forEach((v, index) => {
@@ -91,7 +98,7 @@ export function removeBrowserView(
       x: index * viewWidth,
       y: 0,
       width: viewWidth,
-      height: height - 235,
+      height: availableHeight,
     });
   });
 }

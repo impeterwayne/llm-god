@@ -1,5 +1,42 @@
 const ipcRenderer = window.electron.ipcRenderer;
 
+let promptArea: HTMLElement | null = null;
+
+const notifyPromptAreaSize = (): void => {
+  if (!promptArea) {
+    return;
+  }
+
+  const rect = promptArea.getBoundingClientRect();
+  ipcRenderer.send("prompt-area-size", rect.height);
+};
+
+const initializePromptAreaObserver = (): void => {
+  promptArea = document.getElementById("prompt-area");
+
+  if (!promptArea) {
+    return;
+  }
+
+  const promptAreaObserver = new ResizeObserver(() => {
+    notifyPromptAreaSize();
+  });
+
+  promptAreaObserver.observe(promptArea);
+  window.addEventListener("resize", notifyPromptAreaSize);
+  window.addEventListener("orientationchange", notifyPromptAreaSize);
+
+  notifyPromptAreaSize();
+};
+
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", initializePromptAreaObserver, {
+    once: true,
+  });
+} else {
+  initializePromptAreaObserver();
+}
+
 export function logToWebPage(message: string): void {
   ipcRenderer.send("enter-prompt", message);
 }

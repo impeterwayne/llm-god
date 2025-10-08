@@ -36,6 +36,8 @@ let formWindow: BrowserWindow | null; // Allow formWindow to be null
 let pendingRowSelectedKey: string | null = null; // Store the key of the selected row for later use
 
 const views: CustomBrowserView[] = [];
+let promptAreaHeight = 0;
+let browserViewsInitialized = false;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,6 +49,64 @@ const websites: string[] = [
   "https://gemini.google.com/",
   "https://www.perplexity.ai/",
 ];
+
+async function adjustBrowserViewBounds(): Promise<void> {
+  if (!mainWindow) {
+    return;
+  }
+
+  const { width, height } = mainWindow.getContentBounds();
+  const availableHeight = Math.max(height - promptAreaHeight, 0);
+  const viewWidth = websites.length > 0 ? Math.floor(width / websites.length) : width;
+
+  views.forEach((view, index) => {
+    view.setBounds({
+      x: index * viewWidth,
+      y: 0,
+      width: viewWidth,
+      height: availableHeight,
+    });
+  });
+}
+
+async function initializeBrowserViews(): Promise<void> {
+  if (!mainWindow || browserViewsInitialized) {
+    await adjustBrowserViewBounds();
+    return;
+  }
+
+  const { width, height } = mainWindow.getContentBounds();
+  const viewWidth = websites.length > 0 ? Math.floor(width / websites.length) : width;
+  const availableHeight = Math.max(height - promptAreaHeight, 0);
+
+  browserViewsInitialized = true;
+
+  websites.forEach((url: string, index: number) => {
+    const view = new WebContentsView({
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+    }) as CustomBrowserView; // Cast to CustomBrowserView
+
+    view.id = `${url}`;
+    mainWindow.contentView.addChildView(view);
+    view.setBounds({
+      x: index * viewWidth,
+      y: 0,
+      width: viewWidth,
+      height: availableHeight,
+    });
+    view.webContents.setZoomFactor(1);
+    applyCustomStyles(view.webContents);
+    view.webContents.loadURL(url);
+
+    views.push(view);
+  });
+
+  await adjustBrowserViewBounds();
+  updateZoomFactor();
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -66,34 +126,13 @@ function createWindow(): void {
   mainWindow.loadFile(path.join(__dirname, "..", "index.html")); // Changed to point to root index.html
 
   // mainWindow.webContents.openDevTools({ mode: "detach" });
-  const viewWidth = Math.floor(mainWindow.getBounds().width / websites.length);
-  const { height } = mainWindow.getBounds();
-
-  websites.forEach((url: string, index: number) => {
-    const view = new WebContentsView({
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-      },
-    }) as CustomBrowserView; // Cast to CustomBrowserView
-
-    view.id = `${url}`;
-    mainWindow.contentView.addChildView(view);
-    view.setBounds({
-      x: index * viewWidth,
-      y: 0,
-      width: viewWidth,
-      height: height - 235,
-    });
-    // view.webContents.openDevTools({ mode: "detach" });
-    view.webContents.setZoomFactor(1);
-    applyCustomStyles(view.webContents);
-    view.webContents.loadURL(url);
-
-    views.push(view);
+  mainWindow.on("enter-full-screen", () => {
+    void adjustBrowserViewBounds();
+    updateZoomFactor();
   });
 
-  mainWindow.on("enter-full-screen", () => {
+  mainWindow.on("leave-full-screen", () => {
+    void adjustBrowserViewBounds();
     updateZoomFactor();
   });
 
@@ -106,18 +145,13 @@ function createWindow(): void {
   mainWindow.on("resize", () => {
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
-      const { width, height } = mainWindow.getBounds();
-      const viewWidth = Math.floor(width / websites.length);
-      views.forEach((view, index) => {
-        view.setBounds({
-          x: index * viewWidth,
-          y: 0,
-          width: viewWidth,
-          height: height - 200,
-        });
-      });
+      void adjustBrowserViewBounds();
       updateZoomFactor();
     }, 200);
+  });
+
+  mainWindow.webContents.once("did-finish-load", () => {
+    void initializeBrowserViews();
   });
 }
 
@@ -154,6 +188,23 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+ipcMain.on("prompt-area-size", (_, height: number) => {
+  const normalizedHeight = Math.max(0, Math.round(height));
+
+  if (normalizedHeight === promptAreaHeight) {
+    return;
+  }
+
+  promptAreaHeight = normalizedHeight;
+
+  if (browserViewsInitialized) {
+    void adjustBrowserViewBounds();
+    updateZoomFactor();
+  } else {
+    void initializeBrowserViews();
+  }
 });
 
 ipcMain.on("open-form-window", () => {
@@ -223,7 +274,8 @@ ipcMain.on("open-lm-arena", (_, prompt: string) => {
   if (prompt === "open lm arena now") {
     console.log("Opening LMArena");
     let url = "https://lmarena.ai/?mode=direct";
-    addBrowserView(mainWindow, url, websites, views);
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+    void adjustBrowserViewBounds();
   }
 });
 
@@ -232,7 +284,8 @@ ipcMain.on("close-lm-arena", (_, prompt: string) => {
     console.log("Closing LMArena");
     const lmArenaView = views.find((view) => view.id.match("lmarena"));
     if (lmArenaView) {
-      removeBrowserView(mainWindow, lmArenaView, websites, views);
+      removeBrowserView(mainWindow, lmArenaView, websites, views, { promptAreaHeight });
+      void adjustBrowserViewBounds();
     }
   }
 });
@@ -241,7 +294,8 @@ ipcMain.on("open-claude", (_, prompt: string) => {
   if (prompt === "open claude now") {
     console.log("Opening Claude");
     let url = "https://claude.ai/chats/";
-    addBrowserView(mainWindow, url, websites, views);
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+    void adjustBrowserViewBounds();
   }
 });
 
@@ -250,7 +304,8 @@ ipcMain.on("close-claude", (_, prompt: string) => {
     console.log("Closing Claude");
     const claudeView = views.find((view) => view.id.match("claude"));
     if (claudeView) {
-      removeBrowserView(mainWindow, claudeView, websites, views);
+      removeBrowserView(mainWindow, claudeView, websites, views, { promptAreaHeight });
+      void adjustBrowserViewBounds();
     }
   }
 });
@@ -259,7 +314,8 @@ ipcMain.on("open-grok", (_, prompt: string) => {
   if (prompt === "open grok now") {
     console.log("Opening Grok");
     let url = "https://grok.com/";
-    addBrowserView(mainWindow, url, websites, views);
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+    void adjustBrowserViewBounds();
   }
 });
 
@@ -268,7 +324,8 @@ ipcMain.on("close-grok", (_, prompt: string) => {
     console.log("Closing Grok");
     const grokView = views.find((view) => view.id.match("grok"));
     if (grokView) {
-      removeBrowserView(mainWindow, grokView, websites, views);
+      removeBrowserView(mainWindow, grokView, websites, views, { promptAreaHeight });
+      void adjustBrowserViewBounds();
     }
   }
 });
@@ -277,7 +334,8 @@ ipcMain.on("open-deepseek", (_, prompt: string) => {
   if (prompt === "open deepseek now") {
     console.log("Opening DeepSeek");
     let url = "https://chat.deepseek.com/";
-    addBrowserView(mainWindow, url, websites, views);
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+    void adjustBrowserViewBounds();
   }
 });
 
@@ -286,7 +344,8 @@ ipcMain.on("close-deepseek", (_, prompt: string) => {
     console.log("Closing Deepseek");
     const deepseekView = views.find((view) => view.id.match("deepseek"));
     if (deepseekView) {
-      removeBrowserView(mainWindow, deepseekView, websites, views);
+      removeBrowserView(mainWindow, deepseekView, websites, views, { promptAreaHeight });
+      void adjustBrowserViewBounds();
     }
   }
 });
