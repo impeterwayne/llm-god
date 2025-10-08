@@ -96,9 +96,6 @@ const promptDropdownButton = document.querySelector(
 const copyAgentPromptButton = document.getElementById(
   "copy-agent-prompt",
 ) as HTMLButtonElement | null;
-const copyAgentPromptButton = document.getElementById(
-  "copy-agent-prompt",
-) as HTMLButtonElement | null;
 
 if (openClaudeButton) {
   openClaudeButton.addEventListener("click", (event: MouseEvent) => {
