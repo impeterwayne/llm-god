@@ -93,6 +93,9 @@ const openLMArenaButton = document.getElementById(
 const promptDropdownButton = document.querySelector(
   ".prompt-select",
 ) as HTMLButtonElement | null;
+const copyAgentPromptButton = document.getElementById(
+  "copy-agent-prompt",
+) as HTMLButtonElement | null;
 
 if (openClaudeButton) {
   openClaudeButton.addEventListener("click", (event: MouseEvent) => {
@@ -164,6 +167,72 @@ if (promptDropdownButton) {
     console.log("Prompt dropdown button clicked");
     event.stopPropagation();
     ipcRenderer.send("open-form-window");
+  });
+}
+
+if (copyAgentPromptButton) {
+  copyAgentPromptButton.addEventListener("click", async () => {
+    try {
+      const urls = ((await ipcRenderer.invoke(
+        "get-current-urls",
+      )) ?? []) as string[];
+
+      const filteredUrls = urls
+        .map((url) => url.trim())
+        .filter((url) => url.length > 0);
+
+      if (filteredUrls.length === 0) {
+        copyAgentPromptButton.textContent = "No Tabs Found";
+        setTimeout(() => {
+          copyAgentPromptButton.textContent = "Copy Agent Prompt";
+        }, 1500);
+        return;
+      }
+
+      const userPrompt = textArea?.value.trim();
+
+      const promptSections = [
+        "You are an external browsing agent. Open each of the provided links, study their contents, and craft the best possible answer for the user.",
+      ];
+
+      if (userPrompt && userPrompt.length > 0) {
+        promptSections.push("\nUser request:\n" + userPrompt);
+      } else {
+        promptSections.push("\nUser request: (not provided)");
+      }
+
+      const urlList = filteredUrls
+        .map((url, index) => `${index + 1}. ${url}`)
+        .join("\n");
+
+      promptSections.push(
+        "\nRelevant sources (visit all of them before responding):\n" +
+          urlList,
+      );
+
+      promptSections.push(
+        "\nAfter visiting the pages, synthesize the insights into a comprehensive answer. Reference the sources you used.",
+      );
+
+      const agentPrompt = promptSections.join("\n");
+
+      ipcRenderer.send("copy-to-clipboard", agentPrompt);
+
+      const originalLabel = copyAgentPromptButton.textContent;
+      copyAgentPromptButton.textContent = "Copied!";
+      setTimeout(() => {
+        copyAgentPromptButton.textContent =
+          originalLabel ?? "Copy Agent Prompt";
+      }, 1500);
+    } catch (error) {
+      console.error("Failed to build agent prompt", error);
+      const originalLabel = copyAgentPromptButton.textContent;
+      copyAgentPromptButton.textContent = "Copy Failed";
+      setTimeout(() => {
+        copyAgentPromptButton.textContent =
+          originalLabel ?? "Copy Agent Prompt";
+      }, 1500);
+    }
   });
 }
 

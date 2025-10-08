@@ -60,6 +60,25 @@
         position: relative;
       }
 
+      .utility-button {
+        width: 100%;
+        height: 50px;
+        font-size: 18px;
+        padding: 10px;
+        border: 2px solid #ccc;
+        border-radius: 4px;
+        background-color: #0078d7;
+        color: #fff;
+        cursor: pointer;
+        box-sizing: border-box;
+        font-weight: bold;
+        transition: background-color 0.3s ease;
+      }
+
+      .utility-button:hover {
+        background-color: #006cbd;
+      }
+
       #dropdown-button,
       .prompt-select {
         width: 100%;
@@ -147,6 +166,9 @@
         <div class="prompt-picker">
           <button class="prompt-select">Select Prompts</button>
         </div>
+        <button class="utility-button" id="copy-agent-prompt">
+          Copy Agent Prompt
+        </button>
       </div>
     </div>
   </body>

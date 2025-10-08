@@ -5,6 +5,7 @@ import {
   IpcMainEvent,
   WebContentsView,
   nativeTheme,
+  clipboard,
 } from "electron";
 import * as remote from "@electron/remote/main/index.js";
 import path from "path";
@@ -216,6 +217,21 @@ ipcMain.on("close-form-window", () => {
     formWindow.close();
     formWindow = null; // Clear the reference
   }
+});
+
+ipcMain.handle("get-current-urls", () => {
+  return views.map((view) => {
+    const currentUrl = view.webContents.getURL();
+    if (currentUrl && currentUrl.length > 0) {
+      return currentUrl;
+    }
+
+    return view.id ?? "";
+  });
+});
+
+ipcMain.on("copy-to-clipboard", (_, text: string) => {
+  clipboard.writeText(text ?? "");
 });
 
 ipcMain.on("save-prompt", (event, promptValue: string) => {
