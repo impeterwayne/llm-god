@@ -164,76 +164,155 @@ export function injectPromptIntoView(view, prompt) {
     `);
     }
     else if (view.id && view.id.match("perplexity")) {
-        //  view.webContents.openDevTools({ mode: "detach" });
         view.webContents.executeJavaScript(`
-      ((prompt) => {
-        const editorElement = document.getElementById('ask-input');
+      (async (prompt) => {
+        const waitForElement = (selector, checkFn = null, timeout = 10000) => {
+          return new Promise((resolve, reject) => {
+            // Check if already exists
+            const existing = document.getElementById(selector) || document.querySelector(selector);
+            if (existing && (!checkFn || checkFn(existing))) {
+              resolve(existing);
+              return;
+            }
 
-        if (editorElement && editorElement.__lexicalEditor) {
-          const editor = editorElement.__lexicalEditor;
-          console.log('Lexical editor found. Setting state directly based on provided structure.');
+            // Use MutationObserver to watch for changes
+            const observer = new MutationObserver((mutations, obs) => {
+              const element = document.getElementById(selector) || document.querySelector(selector);
+              if (element && (!checkFn || checkFn(element))) {
+                obs.disconnect();
+                resolve(element);
+              }
+            });
 
-          editor.focus();
-          const newState = {
-            root: {
-              children: [
-                {
-                  children: [
-                    {
-                      detail: 0,
-                      format: 0,
-                      mode: 'normal',
-                      style: '',
-                      text: prompt,
-                      type: 'text',
-                      version: 1,
-                    },
-                  ],
-                  direction: 'ltr',
-                  format: '',
-                  indent: 0,
-                  type: 'paragraph',
-                  version: 1,
-                },
-              ],
-              direction: 'ltr',
-              format: '',
-              indent: 0,
-              type: 'root',
-              version: 1,
-            },
-          };
-          const editorState = editor.parseEditorState(JSON.stringify(newState));
-          editor.setEditorState(editorState);
-          const dataTransfer = new DataTransfer();
-          dataTransfer.setData('text/plain', '');
-          const targetElement = editorElement.querySelector('[role="textbox"]') || editorElement;
-          const pasteEvent = new ClipboardEvent('paste', {
-            clipboardData: dataTransfer,
-            bubbles: true,
-            cancelable: true,
-            composed: true,
+            observer.observe(document.body, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['class', 'id']
+            });
+
+            // Timeout fallback
+            setTimeout(() => {
+              observer.disconnect();
+              reject(new Error('Element not found within timeout'));
+            }, timeout);
           });
-          targetElement.dispatchEvent(pasteEvent);
-        } else if (editorElement) {
-          // This fallback for a standard textarea looks correct.
-          const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLTextAreaElement.prototype,
-            'value',
-          )?.set;
-          nativeTextAreaValueSetter?.call(editorElement, prompt);
-          const event = new Event('input', { bubbles: true });
-          editorElement.dispatchEvent(event);
+        };
+
+        try {
+          console.log('[Perplexity] Waiting for editor...');
+          
+          // Wait for editor with Lexical check
+          const editorElement = await waitForElement(
+            'ask-input',
+            (el) => el.__lexicalEditor || el.tagName === 'TEXTAREA'
+          );
+
+          console.log('[Perplexity] Editor ready!');
+
+          if (editorElement && editorElement.__lexicalEditor) {
+            const editor = editorElement.__lexicalEditor;
+            console.log('[Perplexity] Using Lexical editor');
+
+            editor.focus();
+            const newState = {
+              root: {
+                children: [
+                  {
+                    children: [
+                      {
+                        detail: 0,
+                        format: 0,
+                        mode: 'normal',
+                        style: '',
+                        text: prompt,
+                        type: 'text',
+                        version: 1,
+                      },
+                    ],
+                    direction: 'ltr',
+                    format: '',
+                    indent: 0,
+                    type: 'paragraph',
+                    version: 1,
+                  },
+                ],
+                direction: 'ltr',
+                format: '',
+                indent: 0,
+                type: 'root',
+                version: 1,
+              },
+            };
+            const editorState = editor.parseEditorState(JSON.stringify(newState));
+            editor.setEditorState(editorState);
+            const dataTransfer = new DataTransfer();
+            dataTransfer.setData('text/plain', '');
+            const targetElement = editorElement.querySelector('[role="textbox"]') || editorElement;
+            const pasteEvent = new ClipboardEvent('paste', {
+              clipboardData: dataTransfer,
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+            });
+            targetElement.dispatchEvent(pasteEvent);
+          } else if (editorElement) {
+            console.log('[Perplexity] Using textarea fallback');
+            const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+              window.HTMLTextAreaElement.prototype,
+              'value',
+            )?.set;
+            nativeTextAreaValueSetter?.call(editorElement, prompt);
+            const event = new Event('input', { bubbles: true });
+            editorElement.dispatchEvent(event);
+          }
+        } catch (error) {
+          console.error('[Perplexity] Failed to inject prompt:', error);
         }
       })(${JSON.stringify(prompt)});
     `);
     }
     else if (view.id && view.id.match("claude")) {
         view.webContents.executeJavaScript(`
-      ((prompt) => {
-        const inputElement = document.querySelector('div.ProseMirror');
-        if (inputElement) {
+      (async (prompt) => {
+        const waitForElement = (selector, timeout = 10000) => {
+          return new Promise((resolve, reject) => {
+            const existing = document.querySelector(selector);
+            if (existing) {
+              resolve(existing);
+              return;
+            }
+
+            const observer = new MutationObserver((mutations, obs) => {
+              const element = document.querySelector(selector);
+              if (element) {
+                obs.disconnect();
+                resolve(element);
+              }
+            });
+
+            observer.observe(document.body, {
+              childList: true,
+              subtree: true
+            });
+
+            setTimeout(() => {
+              observer.disconnect();
+              reject(new Error('Element not found within timeout'));
+            }, timeout);
+          });
+        };
+
+        try {
+          console.log('[Claude] Waiting for editor...');
+          const inputElement = await waitForElement('div.ProseMirror');
+          console.log('[Claude] Editor ready!');
+          
           inputElement.innerHTML = prompt;
+          inputElement.dispatchEvent(new Event('input', { bubbles: true }));
+          inputElement.dispatchEvent(new Event('change', { bubbles: true }));
+        } catch (error) {
+          console.error('[Claude] Failed to inject prompt:', error);
         }
       })(${JSON.stringify(prompt)});
     `);
@@ -300,9 +379,8 @@ export async function simulateFileDropInView(view, files) {
       try {
         const decodeBase64 = (base64) => {
           const binary = atob(base64);
-          const length = binary.length;
-          const bytes = new Uint8Array(length);
-          for (let i = 0; i < length; i++) {
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) {
             bytes[i] = binary.charCodeAt(i);
           }
           return bytes;
@@ -310,400 +388,255 @@ export async function simulateFileDropInView(view, files) {
 
         const createFile = (file) => {
           const bytes = decodeBase64(file.data);
-          const blobParts = [bytes];
-          const options = {
+          return new File([bytes], file.name || "dropped-file", {
             type: file.type || "application/octet-stream",
             lastModified: file.lastModified || Date.now(),
-          };
-          return new File(blobParts, file.name || "dropped-file", options);
+          });
         };
 
         const generatedFiles = files.map(createFile);
+        const hostname = location.hostname;
+        console.log('[LLM-God] Processing', generatedFiles.length, 'files for', hostname);
+        const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
         const buildDataTransfer = () => {
-          const transfer = new DataTransfer();
-          generatedFiles.forEach((file) => transfer.items.add(file));
-          try {
-            transfer.effectAllowed = "copy";
-            transfer.dropEffect = "copy";
-          } catch (error) {
-            // Some browsers restrict assigning these properties
-          }
-          return transfer;
+          const dt = new DataTransfer();
+          generatedFiles.forEach(file => dt.items.add(file));
+          return dt;
         };
 
-        const createDataTransfer = () => buildDataTransfer();
-        const cloneFileList = () => buildDataTransfer().files;
-
-        const siteSelectors = {
-          "chatgpt.com": [
-            '[data-testid="attachment-dropzone"]',
-            '[data-testid="drag-drop-container"]',
-            '[data-testid="file-upload"]',
-            '[data-testid="composer"] textarea',
-            'form textarea',
-            'textarea[data-id="prompt-textarea"]',
-          ],
-          "claude.ai": [
-            '.MessageComposerDropzone',
-            '[data-testid="chat-input-textarea"]',
-            'textarea',
-          ],
-          "gemini.google.com": [
-            '[aria-label="Drop files here"]',
-            'form [role="presentation"]',
-            '[contenteditable="true"][role="textbox"]',
-            '[contenteditable="true"][aria-label]',
-            '[contenteditable="true"]',
-            'textarea',
-          ],
-          "perplexity.ai": [
-            '#ask-input',
-            '[data-testid="dropzone"]',
-            '[data-testid="upload-dropzone"]',
-            '[data-testid="prompt-input"]',
-            'textarea',
-            '[contenteditable="true"]',
-          ],
-          "www.perplexity.ai": [
-            '#ask-input',
-            '[data-testid="dropzone"]',
-            '[data-testid="upload-dropzone"]',
-            '[data-testid="prompt-input"]',
-            'textarea',
-            '[contenteditable="true"]',
-          ],
-          "grok.com": [
-            'textarea',
-            '[contenteditable="true"]',
-          ],
-          "chat.deepseek.com": [
-            'textarea',
-            '[contenteditable="true"]',
-          ],
-          "deepseek.com": [
-            'textarea',
-            '[contenteditable="true"]',
-          ],
-          "lmarena.ai": [
-            'textarea',
-            '[contenteditable="true"]',
-          ],
-        };
-
-        const normalizedHost = location.hostname.replace(/^www\./, "");
-        const hostSelectors =
-          siteSelectors[location.hostname] ||
-          siteSelectors[normalizedHost] ||
-          [];
-
-        const hostsRequiringInputSync = new Set([
-          'perplexity.ai',
-          'www.perplexity.ai',
-          'gemini.google.com',
-        ]);
-
-        const shouldForceInputSync =
-          hostsRequiringInputSync.has(location.hostname) ||
-          hostsRequiringInputSync.has(normalizedHost);
-
-        const fallbackSelectors = [
-          '[data-testid="prompt-input"]',
-          '.composer',
-          '[role="textbox"]',
-          'form',
-          'main',
-          'body',
-        ];
-
-        const selectors = [...hostSelectors, ...fallbackSelectors];
-
-        const candidateTargets = [];
-        const seen = new Set();
-
-        const addCandidate = (element) => {
-          if (element && element instanceof Element && !seen.has(element)) {
-            seen.add(element);
-            candidateTargets.push(element);
+        /**
+         * ---------------------------------------------------------------------
+         * GENERIC DRAG AND DROP SIMULATION HELPER
+         * ---------------------------------------------------------------------
+         */
+        const simulateDragAndDrop = async (target) => {
+          if (!target) {
+            console.error('[LLM-God] No drop target found for simulation');
+            return false;
           }
-        };
-
-        selectors.forEach((selector) => {
-          if (selector === 'body') {
-            addCandidate(document.body);
-            return;
-          }
-
-          const matches = Array.from(document.querySelectorAll(selector));
-          matches.forEach(addCandidate);
-        });
-
-        if (!candidateTargets.length) {
-          addCandidate(document.body);
-        }
-
-        const prioritizedTargets = candidateTargets
-          .map((element) => {
-            const rect = element.getBoundingClientRect();
-            const area = rect.width * rect.height;
-            let weight = Number.isFinite(rect.bottom) ? rect.bottom : 0;
-
-            if (area <= 0) {
-              weight -= 5000;
-            } else {
-              weight += Math.min(area, 400000) / 100;
-            }
-
-            if (element.matches?.('textarea, [contenteditable="true"], input[type="file"]')) {
-              weight += 6000;
-            }
-
-            const testId = (element.getAttribute?.('data-testid') || '').toLowerCase();
-            if (testId.includes('drop') || testId.includes('upload')) {
-              weight += 5000;
-            }
-
-            const ariaLabel = (element.getAttribute?.('aria-label') || '').toLowerCase();
-            if (ariaLabel.includes('drop') || ariaLabel.includes('upload')) {
-              weight += 3000;
-            }
-
-            return { element, weight };
-          })
-          .sort((a, b) => b.weight - a.weight)
-          .map((entry) => entry.element);
-
-        const targetsToTry = prioritizedTargets.length
-          ? prioritizedTargets
-          : [document.body, document.documentElement].filter(
-              (el) => el instanceof Element
-            );
-
-        const computeCoordinates = (target) => {
-          const fallbackX = window.innerWidth / 2;
-          const fallbackY = window.innerHeight / 2;
-
-          if (!(target instanceof Element)) {
-            return {
-              clientX: fallbackX,
-              clientY: fallbackY,
-              pageX: fallbackX + window.scrollX,
-              pageY: fallbackY + window.scrollY,
-              screenX: window.screenX + fallbackX,
-              screenY: window.screenY + fallbackY,
-            };
-          }
-
+          console.log('[LLM-God] Using generic drop simulation for target:', target.tagName, target.className);
+          
           const rect = target.getBoundingClientRect();
-          const rectWidth = rect.width || 0;
-          const rectHeight = rect.height || 0;
-          const clientX = Number.isFinite(rect.left)
-            ? rect.left + Math.min(rectWidth / 2, 200)
-            : fallbackX;
-          const clientY = Number.isFinite(rect.top)
-            ? rect.top + Math.min(rectHeight / 2, 200)
-            : fallbackY;
-          return {
-            clientX,
-            clientY,
-            pageX: clientX + window.scrollX,
-            pageY: clientY + window.scrollY,
-            screenX: window.screenX + clientX,
-            screenY: window.screenY + clientY,
+          const coords = {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2
           };
+          const isGemini = hostname.includes('gemini.google.com');
+          const handlers = new Map();
+
+          // Add temporary event listeners to prevent default browser behavior
+          if (!isGemini) {
+            const createPreventHandler = () => (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (e.dataTransfer) {
+                try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
+              }
+            };
+            const captureEvents = ['dragenter', 'dragover'];
+            captureEvents.forEach(eventType => {
+              const handler = createPreventHandler();
+              handlers.set(eventType, handler);
+              target.addEventListener(eventType, handler, { capture: true });
+              document.addEventListener(eventType, handler, { capture: true });
+            });
+          }
+
+          // Create a synthetic DragEvent
+          const createDragEvent = (type) => {
+            const dt = buildDataTransfer();
+            try { Object.defineProperty(dt, 'types', { value: ['Files'] }); } catch (e) {}
+            try { dt.effectAllowed = 'all'; } catch (e) {}
+            if (type === 'dragover' || type === 'drop') {
+              try { dt.dropEffect = 'copy'; } catch (e) {}
+            }
+            const event = new DragEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              dataTransfer: dt,
+              clientX: coords.x,
+              clientY: coords.y,
+              view: window,
+            });
+            try { Object.defineProperty(event, 'dataTransfer', { value: dt }); } catch (e) {}
+            return event;
+          };
+
+          // Execute drag-and-drop sequence
+          document.dispatchEvent(createDragEvent('dragenter'));
+          await wait(30);
+          target.dispatchEvent(createDragEvent('dragenter'));
+          await wait(30);
+          for (let i = 0; i < 5; i++) {
+            document.dispatchEvent(createDragEvent('dragover'));
+            await wait(20);
+            target.dispatchEvent(createDragEvent('dragover'));
+            await wait(20);
+          }
+          target.dispatchEvent(createDragEvent('drop'));
+          await wait(100);
+          target.dispatchEvent(createDragEvent('dragend'));
+          document.dispatchEvent(createDragEvent('dragend'));
+          await wait(100);
+          target.dispatchEvent(createDragEvent('dragleave'));
+          document.dispatchEvent(createDragEvent('dragleave'));
+          await wait(50);
+
+          // Cleanup handlers
+          if (!isGemini) {
+            handlers.forEach((handler, eventType) => {
+              target.removeEventListener(eventType, handler, { capture: true });
+              document.removeEventListener(eventType, handler, { capture: true });
+            });
+          }
+          return true;
         };
 
-        const waitForNextFrame = () =>
-          new Promise((resolve) => {
-            const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 16));
-            raf(() => resolve());
-          });
 
-        const dispatchDragEvent = (type, target, dataTransfer, overrides = {}) => {
-          if (!target || typeof target.dispatchEvent !== 'function') {
-            return false;
-          }
-
-          try {
-            if (dataTransfer) {
-              dataTransfer.effectAllowed = 'copy';
-              if (type === 'dragover' || type === 'drop') {
-                dataTransfer.dropEffect = overrides.dropEffect || 'copy';
-              }
-            }
-          } catch (error) {
-            // Ignore assignment restrictions
-          }
-
-          const coordinates = computeCoordinates(target);
-          const isCancelable =
-            type === 'dragenter' || type === 'dragover' || type === 'drop';
-
-          const event = new DragEvent(type, {
-            dataTransfer,
-            bubbles: true,
-            cancelable: overrides.cancelable ?? isCancelable,
-            composed: true,
-            buttons: 1,
-            button: 0,
-            ...coordinates,
-            ...overrides,
-          });
-
-          if (dataTransfer && (!event.dataTransfer || event.dataTransfer !== dataTransfer)) {
-            try {
-              Object.defineProperty(event, 'dataTransfer', {
-                configurable: true,
-                enumerable: true,
-                get: () => dataTransfer,
-              });
-            } catch (error) {
-              // Fallback for browsers that disallow redefining the property
-              if (!event.dataTransfer) {
-                try {
-                  Reflect.set(event, 'dataTransfer', dataTransfer);
-                } catch (setError) {
-                  // Unable to force the property; continue without throwing.
+        // CLAUDE-SPECIFIC IMPLEMENTATION
+        if (hostname.includes('claude.ai')) {
+          console.log('[LLM-God] Using Claude-specific file upload');
+          const waitForFileInput = (timeout = 10000) => {
+            return new Promise((resolve, reject) => {
+              const findBestInput = () => {
+                const inputs = document.querySelectorAll('input[type="file"]');
+                if (inputs.length === 0) return null;
+                for (let i = inputs.length - 1; i >= 0; i--) {
+                  const input = inputs[i];
+                  if (!input.disabled) return input;
                 }
+                return inputs[inputs.length - 1]; // fallback
+              };
+              const existing = findBestInput();
+              if (existing) {
+                resolve(existing);
+                return;
               }
-            }
-          }
-
-          target.dispatchEvent(event);
-          return event.defaultPrevented;
-        };
-
-        const runDragSequence = async (target, dataTransfer) => {
-          const ancestors = [];
-          let current = target instanceof Element ? target : null;
-
-          while (current) {
-            ancestors.push(current);
-            current = current.parentElement;
-          }
-
-          const path = ancestors.slice().reverse();
-
-          const globalTargets = [document, document.documentElement, document.body].filter(
-            (element) => element && typeof element.dispatchEvent === 'function',
-          );
-
-          for (const globalTarget of globalTargets) {
-            dispatchDragEvent('dragenter', globalTarget, dataTransfer);
-            await waitForNextFrame();
-            for (let i = 0; i < 3; i++) {
-              dispatchDragEvent('dragover', globalTarget, dataTransfer);
-              await waitForNextFrame();
-            }
-          }
-
-          for (const element of path) {
-            dispatchDragEvent('dragenter', element, dataTransfer);
-            await waitForNextFrame();
-            for (let i = 0; i < 5; i++) {
-              dispatchDragEvent('dragover', element, dataTransfer);
-              await waitForNextFrame();
-            }
-          }
-
-          const dropPrevented = dispatchDragEvent('drop', target, dataTransfer);
-          await waitForNextFrame();
-
-          for (let i = ancestors.length - 1; i >= 0; i--) {
-            dispatchDragEvent('dragleave', ancestors[i], dataTransfer, { cancelable: false });
-            await waitForNextFrame();
-          }
-
-          for (const globalTarget of globalTargets) {
-            dispatchDragEvent('dragleave', globalTarget, dataTransfer, { cancelable: false });
-            await waitForNextFrame();
-          }
-
-          dispatchDragEvent('dragend', target, dataTransfer, { cancelable: false });
-
-          return dropPrevented;
-        };
-
-        const syncFileInputs = (target) => {
-          const inputElements = new Set();
-          if (target instanceof HTMLElement) {
-            target
-              .querySelectorAll('input[type="file"]')
-              .forEach((element) => inputElements.add(element));
-          }
-
-          document
-            .querySelectorAll('input[type="file"]')
-            .forEach((element) => inputElements.add(element));
-
-          if (!inputElements.size) {
-            return false;
-          }
-
-          const filesDescriptor = Object.getOwnPropertyDescriptor(
-            HTMLInputElement.prototype,
-            'files',
-          );
-
-          let updated = false;
-
-          inputElements.forEach((input) => {
-            if (!(input instanceof HTMLInputElement)) {
-              return;
-            }
-
-            const fileList = cloneFileList();
-
-            if (filesDescriptor?.set) {
-              filesDescriptor.set.call(input, fileList);
-            } else {
-              Object.defineProperty(input, 'files', {
-                configurable: true,
-                get: () => fileList,
+              const observer = new MutationObserver((mutations, obs) => {
+                const element = findBestInput();
+                if (element) {
+                  obs.disconnect();
+                  resolve(element);
+                }
               });
-            }
-
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            updated = true;
-          });
-
-          return updated;
-        };
-
-        const attemptDrop = async (target) => {
-          const dataTransfer = createDataTransfer();
-          const dropPrevented = await runDragSequence(target, dataTransfer);
-          let synced = false;
-
-          if (!dropPrevented || shouldForceInputSync) {
-            synced = syncFileInputs(target);
-            if (synced) {
-              return { success: true, dropPrevented, synced };
-            }
-          }
-
-          if (dropPrevented && !shouldForceInputSync) {
-            return { success: true, dropPrevented, synced };
-          }
-
-          return { success: synced, dropPrevented, synced };
-        };
-
-        for (const target of targetsToTry) {
+              observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+              setTimeout(() => {
+                observer.disconnect();
+                const lastChance = findBestInput();
+                if (lastChance) { resolve(lastChance); } 
+                else { reject(new Error('File input not found for Claude')); }
+              }, timeout);
+            });
+          };
+          
           try {
-            const { success } = await attemptDrop(target);
-            if (success) {
-              return true;
+            const targetInput = await waitForFileInput();
+            console.log('[LLM-God] Claude file input found, assigning files...');
+            const dt = buildDataTransfer();
+            try {
+              Object.defineProperty(targetInput, 'files', { value: dt.files, configurable: true });
+            } catch (e) {
+              const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
+              if (descriptor?.set) { descriptor.set.call(targetInput, dt.files); }
             }
+            targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+            targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+            await wait(100);
+            console.log('[LLM-God] ✓ Claude file upload complete via input');
+            return true;
           } catch (error) {
-            console.warn('Drop attempt failed on target', target, error);
+            console.log('[LLM-God] Claude file input failed:', error.message, 'Trying drop zone fallback...');
+            const dropZone = document.querySelector('[data-testid="chat-input-dropzone"]') ||
+                             document.querySelector('.MessageComposerDropzone') ||
+                             document.querySelector('fieldset') ||
+                             document.querySelector('[role="textbox"]');
+            
+            const success = await simulateDragAndDrop(dropZone);
+            if (success) {
+                console.log('[LLM-God] ✓ Claude drop fallback complete');
+            } else {
+                console.error('[LLM-God] ❌ Claude drop fallback failed');
+            }
+            return success;
           }
         }
 
-        return false;
+        // PERPLEXITY-SPECIFIC IMPLEMENTATION
+        if (hostname.includes('perplexity.ai')) {
+          console.log('[LLM-God] Using Perplexity-specific file upload');
+          const waitForFileInput = (timeout = 10000) => {
+            return new Promise((resolve, reject) => {
+              const existing = document.querySelector('input[type="file"]');
+              if (existing) {
+                resolve(existing);
+                return;
+              }
+              const observer = new MutationObserver((mutations, obs) => {
+                const element = document.querySelector('input[type="file"]');
+                if (element) {
+                  obs.disconnect();
+                  resolve(element);
+                }
+              });
+              observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+              setTimeout(() => {
+                observer.disconnect();
+                reject(new Error('File input not found for Perplexity'));
+              }, timeout);
+            });
+          };
+          
+          try {
+            const fileInput = await waitForFileInput();
+            console.log('[LLM-God] Perplexity file input ready!');
+            const dt = buildDataTransfer();
+            try {
+              Object.defineProperty(fileInput, 'files', { value: dt.files, configurable: true });
+            } catch (e) {
+              const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
+              if (descriptor?.set) { descriptor.set.call(fileInput, dt.files); }
+            }
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+            fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+            await wait(200);
+            console.log('[LLM-God] ✓ Perplexity file upload complete');
+            return true;
+          } catch (error) {
+            console.error('[LLM-God] ❌ Perplexity file upload failed:', error);
+            return false;
+          }
+        }
+
+        // GENERIC IMPLEMENTATION FOR OTHER SITES
+        const findTarget = () => {
+          if (hostname.includes('chatgpt.com')) {
+            return document.querySelector('[data-testid="attachment-dropzone"]') ||
+                   document.querySelector('[data-testid="composer-background"]') ||
+                   document.querySelector('form');
+          }
+          if (hostname.includes('gemini.google.com')) {
+            return document.querySelector('form') ||
+                   document.querySelector('[contenteditable="true"]') ||
+                   document.querySelector('.ql-editor.textarea') ||
+                   document.body;
+          }
+          return document.querySelector('form') || document.body;
+        };
+
+        const target = findTarget();
+        const success = await simulateDragAndDrop(target);
+
+        if (success) {
+            console.log('[LLM-God] ✓ Generic file drop simulation complete');
+        } else {
+            console.error('[LLM-God] ❌ Generic file drop simulation failed');
+        }
+        return success;
+
       } catch (error) {
-        console.error('Failed to simulate drag-and-drop', error);
+        console.error('[LLM-God] Fatal error:', error);
         return false;
       }
     })(%files%);
