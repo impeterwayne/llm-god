@@ -1,11 +1,24 @@
 import { BrowserWindow, WebPreferences, WebContentsView } from "electron"; // Added WebPreferences type
 import { applyCustomStyles } from "./customStyles.js";
+import { DEVTOOLS_AUTO_OPEN } from "./config.js";
 
 interface CustomBrowserView extends WebContentsView {
   id?: string; // Make id optional as it's assigned after creation
 }
 
+// Control whether to auto-open DevTools on startup.
+// Edit src/config.ts (DEVTOOLS_AUTO_OPEN) for build-time control.
+// Or set env var ELECTRON_OPEN_DEVTOOLS_ON_STARTUP=true (runtime override).
+const OPEN_DEVTOOLS_ON_STARTUP =
+  DEVTOOLS_AUTO_OPEN ||
+  (process.env.ELECTRON_OPEN_DEVTOOLS_ON_STARTUP ?? "").toLowerCase() ===
+    "true" ||
+  (process.env.SHOW_DEVTOOLS ?? "").toLowerCase() === "true";
+
 export function ensureDetachedDevTools(view: CustomBrowserView): void {
+  // If disabled, do nothing so DevTools can be opened manually later.
+  if (!OPEN_DEVTOOLS_ON_STARTUP) return;
+
   const devToolsEvents = [
     "did-finish-load",
     "dom-ready",
