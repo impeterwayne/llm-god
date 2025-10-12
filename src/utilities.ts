@@ -920,18 +920,41 @@ export function sendPromptInView(view: CustomBrowserView) {
     }
   }`);
   } else if (view.id && view.id.match("grok")) {
-    view.webContents.executeJavaScript(`
-        {
-        var btn = document.querySelector('button[aria-label*="Submit"]');
-        if (btn) {
-            btn.focus();
-            btn.disabled = false;
-            btn.click();
-          } else {
-            console.log("Element not found");
-          }
-      }`);
-  } else if (view.id && view.id.match("deepseek")) {
+  view.webContents.executeJavaScript(`
+    {
+      // Try button click first
+      var btn = document.querySelector('button[aria-label*="Submit"]')
+             || document.querySelector('button[aria-label*="Send"]')
+             || document.querySelector('button[type="submit"]');
+      
+      if (btn) {
+        btn.focus();
+        btn.disabled = false;
+        btn.click();
+        console.log('[Grok] Send button clicked');
+      } else {
+        // Fallback to keyboard simulation
+        var textarea = document.querySelector('textarea');
+        if (textarea) {
+          textarea.focus();
+          var event = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            metaKey: true,
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          });
+          textarea.dispatchEvent(event);
+          console.log('[Grok] Enter key simulated as fallback');
+        } else {
+          console.log('[Grok] No send method found');
+        }
+      }
+    }
+  `);
+} else if (view.id && view.id.match("deepseek")) {
     view.webContents.executeJavaScript(`
         {
         var buttons = Array.from(document.querySelectorAll('div[role="button"]'));
