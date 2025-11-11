@@ -899,12 +899,29 @@ export function sendPromptInView(view: CustomBrowserView) {
     }`);
   } else if (view.id && view.id.match("perplexity")) {
     view.webContents.executeJavaScript(`
-                {
-        var buttons = Array.from(document.querySelectorAll('button.bg-super'));
-        if (buttons[0]) {
-          var buttonsWithSvgPath = buttons.filter(button => button.querySelector('svg path'));
-          var button = buttonsWithSvgPath[buttonsWithSvgPath.length - 1];
+      {
+        console.log('[Perplexity] Looking for submit button...');
+        
+        // Try the reliable data-testid selector first
+        var button = document.querySelector('[data-testid="submit-button"]');
+        
+        // Fallback to the previous method if data-testid is not found
+        if (!button) {
+          console.log('[Perplexity] data-testid not found, falling back to previous selector');
+          var buttons = Array.from(document.querySelectorAll('button.bg-super'));
+          if (buttons[0]) {
+            var buttonsWithSvgPath = buttons.filter(button => button.querySelector('svg path'));
+            button = buttonsWithSvgPath[buttonsWithSvgPath.length - 1];
+          }
+        }
+        
+        if (button) {
+          console.log('[Perplexity] Submit button found, clicking...');
+          button.focus();
           button.click();
+          console.log('[Perplexity] Submit button clicked successfully');
+        } else {
+          console.error('[Perplexity] Submit button not found');
         }
       }
                 `);
