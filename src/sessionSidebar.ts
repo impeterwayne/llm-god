@@ -105,6 +105,22 @@ function toggleSidebar(el: HTMLElement) {
   });
 }
 
+function programmaticCollapseSidebar(el: HTMLElement) {
+  if (el.classList.contains("collapsed")) return;
+  el.classList.add("collapsed");
+  document.body.classList.add("sidebar-collapsed");
+  notifySidebarSize(getRailWidth());
+}
+
+function programmaticExpandSidebar(el: HTMLElement) {
+  if (!el.classList.contains("collapsed")) return;
+  el.classList.remove("collapsed");
+  document.body.classList.remove("sidebar-collapsed");
+  const width = getStoredWidth();
+  setCssSidebarWidth(width);
+  notifySidebarSize(width);
+}
+
 function renderSessions(listEl: HTMLElement, sessions: SessionMeta[]) {
   listEl.innerHTML = "";
   sessions.forEach((s) => {
@@ -202,4 +218,13 @@ export function initSessionSidebar() {
   // Listen for store changes
   ipcRenderer.on("sessions:changed", () => void refreshSessions());
   ipcRenderer.on("sessions:active-changed", () => void refreshSessions());
+
+  // Listen for window state changes to adjust sidebar
+  ipcRenderer.on("window-state-changed", (event, data) => {
+    if (data.state === "fullscreen" || data.state === "maximized") {
+      programmaticCollapseSidebar(sidebar);
+    } else if (data.state === "restored") {
+      programmaticExpandSidebar(sidebar);
+    }
+  });
 }

@@ -289,11 +289,25 @@ function createWindow(): void {
   mainWindow.on("enter-full-screen", () => {
     void adjustBrowserViewBounds();
     updateZoomFactor();
+    mainWindow.webContents.send("window-state-changed", { state: "fullscreen" });
   });
 
   mainWindow.on("leave-full-screen", () => {
     void adjustBrowserViewBounds();
     updateZoomFactor();
+    mainWindow.webContents.send("window-state-changed", { state: "restored" });
+  });
+
+  mainWindow.on("maximize", () => {
+    void adjustBrowserViewBounds();
+    updateZoomFactor();
+    mainWindow.webContents.send("window-state-changed", { state: "maximized" });
+  });
+
+  mainWindow.on("unmaximize", () => {
+    void adjustBrowserViewBounds();
+    updateZoomFactor();
+    mainWindow.webContents.send("window-state-changed", { state: "restored" });
   });
 
   mainWindow.on("focus", () => {
