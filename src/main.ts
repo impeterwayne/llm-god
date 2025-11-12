@@ -67,12 +67,13 @@ async function adjustBrowserViewBounds(): Promise<void> {
 
   const { width, height } = mainWindow.getContentBounds();
   const availableHeight = Math.max(height - promptAreaHeight, 0);
-  const availableWidth = Math.max(width - sidebarWidth, 0);
+  const offset = Math.ceil(Math.max(0, sidebarWidth));
+  const availableWidth = Math.max(width - offset, 0);
   const viewWidth = websites.length > 0 ? Math.floor(availableWidth / websites.length) : availableWidth;
 
   views.forEach((view, index) => {
     view.setBounds({
-      x: sidebarWidth + index * viewWidth,
+      x: offset + index * viewWidth,
       y: 0,
       width: viewWidth,
       height: availableHeight,
@@ -87,7 +88,8 @@ async function initializeBrowserViews(): Promise<void> {
   }
 
   const { width, height } = mainWindow.getContentBounds();
-  const availableWidth = Math.max(width - sidebarWidth, 0);
+  const offset = Math.ceil(Math.max(0, sidebarWidth));
+  const availableWidth = Math.max(width - offset, 0);
   const viewWidth = websites.length > 0 ? Math.floor(availableWidth / websites.length) : availableWidth;
   const availableHeight = Math.max(height - promptAreaHeight, 0);
 
@@ -104,7 +106,7 @@ async function initializeBrowserViews(): Promise<void> {
     view.id = `${url}`;
     mainWindow.contentView.addChildView(view);
     view.setBounds({
-      x: sidebarWidth + index * viewWidth,
+      x: offset + index * viewWidth,
       y: 0,
       width: viewWidth,
       height: availableHeight,
@@ -450,7 +452,7 @@ ipcMain.on("sidebar-size", (_, width: number) => {
     // Run a second pass shortly after to handle layout thrash on expand
     setTimeout(() => {
       void adjustBrowserViewBounds();
-    }, 50);
+    }, 80);
   }
 });
 

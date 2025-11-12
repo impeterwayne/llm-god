@@ -57,10 +57,13 @@ function notifySidebarSize(width: number) {
 
 function syncSidebarSize(el: HTMLElement) {
   if (el.classList.contains("collapsed")) {
-    notifySidebarSize(getRailWidth());
+    // Use actual measured width of the collapsed rail to avoid DPI rounding drift
+    const measured = measureSidebarWidth(el);
+    const width = measured > 0 ? measured : getRailWidth();
+    notifySidebarSize(width);
     return;
   }
-  let width = measureSidebarWidth(el) || getStoredWidth();
+  const width = measureSidebarWidth(el) || getStoredWidth();
   setCssSidebarWidth(width);
   setStoredWidth(width);
   notifySidebarSize(width);
@@ -84,7 +87,9 @@ function toggleSidebar(el: HTMLElement) {
       document.body.classList.add("sidebar-collapsed");
     });
     try { localStorage.setItem("sessionsSidebar.collapsed", "true"); } catch {}
-    notifySidebarSize(getRailWidth());
+    // First notify quickly, then re-measure next frame for exact pixels
+    syncSidebarSize(el);
+    requestAnimationFrame(() => syncSidebarSize(el));
     return;
   }
 
@@ -109,7 +114,8 @@ function programmaticCollapseSidebar(el: HTMLElement) {
   if (el.classList.contains("collapsed")) return;
   el.classList.add("collapsed");
   document.body.classList.add("sidebar-collapsed");
-  notifySidebarSize(getRailWidth());
+  syncSidebarSize(el);
+  requestAnimationFrame(() => syncSidebarSize(el));
 }
 
 function programmaticExpandSidebar(el: HTMLElement) {
@@ -175,9 +181,10 @@ export function initSessionSidebar() {
 
   // Initial width and size sync
   if (sidebar.classList.contains("collapsed")) {
-    // Keep last width in CSS var for next expand, but notify 0
+    // Keep last width in CSS var for next expand, but notify measured rail width
     setCssSidebarWidth(getStoredWidth());
-    notifySidebarSize(getRailWidth());
+    syncSidebarSize(sidebar);
+    requestAnimationFrame(() => syncSidebarSize(sidebar));
   } else {
     setCssSidebarWidth(getStoredWidth());
     requestAnimationFrame(() => {

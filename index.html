@@ -314,8 +314,14 @@
         gap: 0; /* remove inter-button gap in rail */
       }
       body.sidebar-collapsed #sessions-sidebar .sessions-actions { gap: 0; }
-      body.sidebar-collapsed #sessions-sidebar #toggle-sessions { margin: 0; }
-      body.sidebar-collapsed #sessions-sidebar #toggle-sessions { width: var(--sessions-button-size); height: var(--sessions-button-size); }
+      /* Tighter start margin and small end spacing for the rail icon */
+      body.sidebar-collapsed #sessions-sidebar #toggle-sessions {
+        margin-block: 0;
+        margin-inline-start: 2px;
+        margin-inline-end: 6px;
+        width: var(--sessions-button-size);
+        height: var(--sessions-button-size);
+      }
     </style>
     <script>
       // Ensure sidebar uses the CSS default width if a larger value was stored earlier

@@ -137,14 +137,15 @@ export function addBrowserView(
 
   const { width, height } = mainWindow.getContentBounds();
   const availableHeight = Math.max(height - promptAreaHeight, 0);
+  const offset = Math.ceil(Math.max(0, sidebarWidth));
 
   websites.push(url);
-  const availableWidth = Math.max(width - sidebarWidth, 0);
+  const availableWidth = Math.max(width - offset, 0);
   const viewWidth = Math.floor(availableWidth / websites.length);
 
   views.forEach((v, index) => {
     v.setBounds({
-      x: sidebarWidth + index * viewWidth,
+      x: offset + index * viewWidth,
       y: 0,
       width: viewWidth,
       height: availableHeight,
@@ -152,7 +153,7 @@ export function addBrowserView(
   });
 
   view.setBounds({
-    x: sidebarWidth + (websites.length - 1) * viewWidth,
+    x: offset + (websites.length - 1) * viewWidth,
     y: 0,
     width: viewWidth,
     height: availableHeight,
@@ -193,12 +194,13 @@ export function removeBrowserView(
 
   const { width, height } = mainWindow.getContentBounds();
   const availableHeight = Math.max(height - promptAreaHeight, 0);
-  const availableWidth = Math.max(width - sidebarWidth, 0);
+  const offset = Math.ceil(Math.max(0, sidebarWidth));
+  const availableWidth = Math.max(width - offset, 0);
   const viewWidth = Math.floor(availableWidth / views.length);
 
   views.forEach((v, index) => {
     v.setBounds({
-      x: sidebarWidth + index * viewWidth,
+      x: offset + index * viewWidth,
       y: 0,
       width: viewWidth,
       height: availableHeight,
