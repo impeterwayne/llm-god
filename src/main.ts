@@ -50,6 +50,16 @@ let reservedRight = 0; // reserved right space when chat pane is docked right (f
 let sidebarWidth = 280; // default reserve for left sidebar; renderer will update
 let browserViewsInitialized = false;
 let postSendLayoutTimer: NodeJS.Timeout | null = null; // delay snapshot after prompt send
+let sessionLayoutTimer: NodeJS.Timeout | null = null; // debounced saver for session layout
+
+function scheduleSaveActiveLayoutSnapshot(reason?: string, delayMs = 800): void {
+  try {
+    if (sessionLayoutTimer) clearTimeout(sessionLayoutTimer);
+    sessionLayoutTimer = setTimeout(() => {
+      saveActiveLayoutSnapshot(reason);
+    }, Math.max(0, delayMs));
+  } catch {}
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -253,13 +263,28 @@ function saveActiveLayoutSnapshot(reason?: string): void {
   try {
     const state = getSessionState();
     if (!state.activeId) return;
-    const tabs = getCurrentTabsSnapshot();
+    const current = getCurrentTabsSnapshot();
     const layout = state.layouts[state.activeId] ?? { tabs: [] };
+    const prevTabs = Array.isArray(layout.tabs) ? layout.tabs : [];
+    const prevByProvider = new Map(prevTabs.map((t) => [t.provider, t] as const));
+
+    // Build next tabs to reflect current membership, but preserve saved URLs for existing providers
+    const nextTabs: TabState[] = current.map((t) => {
+      const prev = prevByProvider.get(t.provider);
+      return {
+        provider: t.provider,
+        url: prev?.url ?? (PROVIDER_BASE_URL[t.provider] || t.url),
+        zoom: prev?.zoom ?? t.zoom,
+      };
+    });
+
+    // Update lastUrlByProvider based on actual current URLs
     const last: Record<string, string> = { ...(layout.lastUrlByProvider || {}) };
-    for (const t of tabs) {
+    for (const t of current) {
       if (t.provider) last[t.provider] = t.url;
     }
-    state.layouts[state.activeId] = { tabs, lastUrlByProvider: last };
+
+    state.layouts[state.activeId] = { tabs: nextTabs, lastUrlByProvider: last };
     const meta = state.items[state.activeId];
     if (meta) meta.updatedAt = Date.now();
     setSessionState(state);
@@ -293,7 +318,7 @@ function wireViewUrlPersistence(view: WebContentsView & { id?: string }): void {
   wc.on("page-title-updated", update as any);
 }
 
-function restoreLayout(tabs: TabState[], _lastUrlByProvider?: Record<string, string>): void {
+function restoreLayout(tabs: TabState[], lastUrlByProvider?: Record<string, string>): void {
   // Close all existing views
   const toRemove = [...views];
   toRemove.forEach((v) => {
@@ -303,18 +328,52 @@ function restoreLayout(tabs: TabState[], _lastUrlByProvider?: Record<string, str
   // Clear websites list
   websites.splice(0, websites.length);
 
-  // Recreate views based on tabs
+  // Recreate views based on tabs; prefer last-url snapshot if available
   tabs.forEach((tab) => {
-    const url = (tab.url && tab.url.length > 0)
-      ? tab.url
-      : (PROVIDER_BASE_URL[tab.provider] || tab.url);
+    const last = lastUrlByProvider?.[tab.provider];
+    const url = (last && last.length > 0)
+      ? last
+      : ((tab.url && tab.url.length > 0)
+          ? tab.url
+          : (PROVIDER_BASE_URL[tab.provider] || tab.url));
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
   });
 
   void adjustBrowserViewBounds();
   // After restore, persist snapshot so state stores last URLs too
-  saveActiveLayoutSnapshot("restoreLayout");
+  scheduleSaveActiveLayoutSnapshot("restoreLayout", 300);
+}
+
+// Restore the last active session (or a reasonable default) when the app starts
+function restoreLastActiveSessionAtStartup(): void {
+  try {
+    ensureDefaultSession();
+    const state = getSessionState();
+    let id: SessionId | null = state.activeId ?? null;
+    if (!id) {
+      id = (state.pinned && state.pinned[0]) || (state.order && state.order[0]) || null;
+      if (id) {
+        state.activeId = id;
+        setSessionState(state);
+      }
+    }
+    if (!id) return;
+
+    const layout = state.layouts[id];
+    if (!layout) return;
+
+    // Prevent default initializer from creating extra views
+    browserViewsInitialized = true;
+    restoreLayout(layout.tabs, layout.lastUrlByProvider);
+
+    // Inform renderer of active selection
+    mainWindow.webContents.once("did-finish-load", () => {
+      mainWindow.webContents.send("sessions:active-changed", { id });
+    });
+  } catch (err) {
+    console.warn("Failed to restore last active session on startup", err);
+  }
 }
 
 function createWindow(): void {
@@ -417,6 +476,7 @@ function updateZoomFactor(): void {
 app.whenReady().then(() => {
   nativeTheme.themeSource = "dark";
   createWindow();
+  restoreLastActiveSessionAtStartup();
 
   electronLocalShortcut.register(mainWindow, "Ctrl+W", () => {
     app.quit();
@@ -695,7 +755,7 @@ ipcMain.handle("sessions:list", () => {
   };
   state.pinned.forEach(pushIf);
   state.order.forEach(pushIf);
-  return { items };
+  return { items, activeId: state.activeId ?? null };
 });
 
 // Start a fresh temporary context (unsaved)
@@ -703,12 +763,14 @@ ipcMain.handle(
   "context:new",
   (_evt, payload: { layout?: "default" | "empty" }) => {
     const mode = payload?.layout === "empty" ? "empty" : "default";
+    // For a new context, open provider base URLs rather than current pages
     const tabs =
       mode === "empty"
         ? []
-        : (websites || []).map((url) => ({
-            provider: inferProviderFromUrl(url),
-            url,
+        : getCurrentTabsSnapshot().map((t) => ({
+            provider: t.provider,
+            // Force base URL selection during restore by providing empty url
+            url: "",
             zoom: 1,
           }));
     const state = getSessionState();
@@ -817,11 +879,14 @@ ipcMain.on("open-claude", (_, prompt: string) => {
     const state = getSessionState();
     const layout = state.activeId ? state.layouts[state.activeId] : null;
     const tab = layout?.tabs.find(t => t.provider === "claude");
-    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://claude.ai/chats/";
+    const last = layout?.lastUrlByProvider?.["claude"];
+    let url = (last && last.length > 0)
+      ? last
+      : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["claude"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
-    saveActiveLayoutSnapshot("open-claude");
+    scheduleSaveActiveLayoutSnapshot("open-claude", 800);
   }
 });
 
@@ -844,7 +909,7 @@ ipcMain.on("close-claude", (_, prompt: string) => {
       } catch {}
       removeBrowserView(mainWindow, claudeView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
-      saveActiveLayoutSnapshot("close-claude");
+      scheduleSaveActiveLayoutSnapshot("close-claude", 800);
     }
   }
 });
@@ -855,11 +920,14 @@ ipcMain.on("open-grok", (_, prompt: string) => {
     const state = getSessionState();
     const layout = state.activeId ? state.layouts[state.activeId] : null;
     const tab = layout?.tabs.find(t => t.provider === "grok");
-    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://grok.com/";
+    const last = layout?.lastUrlByProvider?.["grok"];
+    let url = (last && last.length > 0)
+      ? last
+      : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["grok"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
-    saveActiveLayoutSnapshot("open-grok");
+    scheduleSaveActiveLayoutSnapshot("open-grok", 800);
   }
 });
 
@@ -881,7 +949,7 @@ ipcMain.on("close-grok", (_, prompt: string) => {
       } catch {}
       removeBrowserView(mainWindow, grokView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
-      saveActiveLayoutSnapshot("close-grok");
+      scheduleSaveActiveLayoutSnapshot("close-grok", 800);
     }
   }
 });
@@ -892,11 +960,14 @@ ipcMain.on("open-deepseek", (_, prompt: string) => {
     const state = getSessionState();
     const layout = state.activeId ? state.layouts[state.activeId] : null;
     const tab = layout?.tabs.find(t => t.provider === "deepseek");
-    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://chat.deepseek.com/";
+    const last = layout?.lastUrlByProvider?.["deepseek"];
+    let url = (last && last.length > 0)
+      ? last
+      : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["deepseek"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
-    saveActiveLayoutSnapshot("open-deepseek");
+    scheduleSaveActiveLayoutSnapshot("open-deepseek", 800);
   }
 });
 
@@ -918,7 +989,7 @@ ipcMain.on("close-deepseek", (_, prompt: string) => {
       } catch {}
       removeBrowserView(mainWindow, deepseekView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
-      saveActiveLayoutSnapshot("close-deepseek");
+      scheduleSaveActiveLayoutSnapshot("close-deepseek", 800);
     }
   }
 });
@@ -929,11 +1000,14 @@ ipcMain.on("open-chatgpt", (_, prompt: string) => {
     const state = getSessionState();
     const layout = state.activeId ? state.layouts[state.activeId] : null;
     const tab = layout?.tabs.find(t => t.provider === "chatgpt");
-    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://chatgpt.com/";
+    const last = layout?.lastUrlByProvider?.["chatgpt"];
+    let url = (last && last.length > 0)
+      ? last
+      : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["chatgpt"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
-    saveActiveLayoutSnapshot("open-chatgpt");
+    scheduleSaveActiveLayoutSnapshot("open-chatgpt", 800);
   }
 });
 
@@ -955,7 +1029,7 @@ ipcMain.on("close-chatgpt", (_, prompt: string) => {
       } catch {}
       removeBrowserView(mainWindow, chatgptView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
-      saveActiveLayoutSnapshot("close-chatgpt");
+      scheduleSaveActiveLayoutSnapshot("close-chatgpt", 800);
     }
   }
 });
@@ -966,11 +1040,14 @@ ipcMain.on("open-gemini", (_, prompt: string) => {
     const state = getSessionState();
     const layout = state.activeId ? state.layouts[state.activeId] : null;
     const tab = layout?.tabs.find(t => t.provider === "gemini");
-    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://gemini.google.com/";
+    const last = layout?.lastUrlByProvider?.["gemini"];
+    let url = (last && last.length > 0)
+      ? last
+      : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["gemini"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
-    saveActiveLayoutSnapshot("open-gemini");
+    scheduleSaveActiveLayoutSnapshot("open-gemini", 800);
   }
 });
 
@@ -992,7 +1069,7 @@ ipcMain.on("close-gemini", (_, prompt: string) => {
       } catch {}
       removeBrowserView(mainWindow, geminiView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
-      saveActiveLayoutSnapshot("close-gemini");
+      scheduleSaveActiveLayoutSnapshot("close-gemini", 800);
     }
   }
 });
@@ -1003,11 +1080,14 @@ ipcMain.on("open-perplexity", (_, prompt: string) => {
     const state = getSessionState();
     const layout = state.activeId ? state.layouts[state.activeId] : null;
     const tab = layout?.tabs.find(t => t.provider === "perplexity");
-    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://www.perplexity.ai/";
+    const last = layout?.lastUrlByProvider?.["perplexity"];
+    let url = (last && last.length > 0)
+      ? last
+      : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["perplexity"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
-    saveActiveLayoutSnapshot("open-perplexity");
+    scheduleSaveActiveLayoutSnapshot("open-perplexity", 800);
   }
 });
 
@@ -1029,7 +1109,7 @@ ipcMain.on("close-perplexity", (_, prompt: string) => {
       } catch {}
       removeBrowserView(mainWindow, perplexityView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
-      saveActiveLayoutSnapshot("close-perplexity");
+      scheduleSaveActiveLayoutSnapshot("close-perplexity", 800);
     }
   }
 });

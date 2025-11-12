@@ -13,6 +13,7 @@ interface SessionMeta {
 
 interface SessionsListResponse {
   items: SessionMeta[];
+  activeId?: SessionId | null;
 }
 
 function getStoredWidth(): number {
@@ -127,7 +128,7 @@ function programmaticExpandSidebar(el: HTMLElement) {
   notifySidebarSize(width);
 }
 
-function renderSessions(listEl: HTMLElement, sessions: SessionMeta[]) {
+function renderSessions(listEl: HTMLElement, sessions: SessionMeta[], activeId?: SessionId | null) {
   listEl.innerHTML = "";
   sessions.forEach((s) => {
     const item = document.createElement("div");
@@ -135,6 +136,10 @@ function renderSessions(listEl: HTMLElement, sessions: SessionMeta[]) {
     item.setAttribute("role", "option");
     item.dataset.id = s.id;
     item.textContent = s.title || "Untitled";
+    if (s.id && activeId && s.id === activeId) {
+      item.classList.add("active");
+      item.setAttribute("aria-selected", "true");
+    }
     item.addEventListener("click", async () => {
       try {
         await ipcRenderer.invoke("sessions:open", { id: s.id });
@@ -157,7 +162,8 @@ async function refreshSessions() {
   if (!list) return;
   try {
     const res = (await ipcRenderer.invoke("sessions:list")) as SessionsListResponse;
-    renderSessions(list, Array.isArray(res?.items) ? res.items : []);
+    const items = Array.isArray(res?.items) ? res.items : [];
+    renderSessions(list, items, res?.activeId ?? null);
   } catch (err) {
     console.error("Failed to load sessions", err);
   }
@@ -231,7 +237,17 @@ export function initSessionSidebar() {
 
   // Listen for store changes
   ipcRenderer.on("sessions:changed", () => void refreshSessions());
-  ipcRenderer.on("sessions:active-changed", () => void refreshSessions());
+  ipcRenderer.on("sessions:active-changed", (_event, payload: { id: string | null }) => {
+    const listEl = document.getElementById("sessions-list");
+    if (!listEl) return;
+    const items = listEl.querySelectorAll<HTMLElement>(".session-item");
+    items.forEach((el) => {
+      const isActive = !!payload?.id && el.dataset.id === payload.id;
+      el.classList.toggle("active", isActive);
+      if (isActive) el.setAttribute("aria-selected", "true");
+      else el.removeAttribute("aria-selected");
+    });
+  });
 
   // Listen for window state changes to adjust sidebar
   ipcRenderer.on("window-state-changed", (event, data) => {
