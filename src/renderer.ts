@@ -1,4 +1,5 @@
 const ipcRenderer = window.electron.ipcRenderer;
+import { initSessionSidebar } from "./sessionSidebar.js";
 
 let promptArea: HTMLElement | null = null;
 
@@ -80,6 +81,13 @@ const notifyPromptAreaSize = (): void => {
   }
 
   const rect = promptArea.getBoundingClientRect();
+  // Expose prompt area height as CSS variable for layout (e.g., sidebar bottom)
+  try {
+    document.documentElement.style.setProperty(
+      "--prompt-area-height",
+      `${Math.max(0, Math.round(rect.height))}px`,
+    );
+  } catch {}
   ipcRenderer.send("prompt-area-size", rect.height);
 };
 
@@ -366,3 +374,13 @@ ipcRenderer.on("inject-prompt", (event, selectedPrompt: string) => {
     console.error("Textarea not found");
   }
 });
+
+// Initialize sessions sidebar after DOM is ready
+// Initialize embedded sessions sidebar (left, visible by default)
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", () => {
+    try { initSessionSidebar(); } catch (err) { console.error(err); }
+  }, { once: true });
+} else {
+  try { initSessionSidebar(); } catch (err) { console.error(err); }
+}

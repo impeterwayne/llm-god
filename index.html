@@ -22,6 +22,11 @@
         --radius-large: 20px;
         --radius-medium: 14px;
         --app-viewport-height: 1vh;
+        --sidebar-width: 280px;
+        --sidebar-max: 280px;
+        --sessions-button-size: 36px; /* unified size for header buttons */
+        --sessions-header-pad: 8px;    /* consistent padding around header items */
+        --sidebar-rail: calc(var(--sessions-button-size) + (2 * var(--sessions-header-pad)));
       }
 
       * {
@@ -35,17 +40,14 @@
         flex-direction: column;
         justify-content: flex-end;
         align-items: center;
+        height: 100vh;
         min-height: 100vh;
-        min-height: calc(var(--app-viewport-height) * 100);
-        padding: 20px 0 0;
-        padding-top: calc(20px + env(safe-area-inset-top, 0px));
-        padding-left: env(safe-area-inset-left, 0px);
-        padding-right: env(safe-area-inset-right, 0px);
-        padding-bottom: env(safe-area-inset-bottom, 0px);
+        padding: 0;
         background: radial-gradient(circle at top, #2a2a2a, #141414 65%, #0f0f0f);
         font-family: "Inter", "Segoe UI", sans-serif;
         color: var(--text-primary);
         transition: justify-content 0.3s ease;
+        overflow: hidden; /* avoid page scroll; layout fits viewport */
       }
 
       body.is-overflowing {
@@ -60,14 +62,17 @@
       }
 
       #prompt-area {
+        position: fixed;
+        left: min(var(--sidebar-width, 280px), var(--sidebar-max, 280px));
+        right: 0;
+        bottom: 0;
         display: flex;
         gap: 14px;
         padding: 22px;
         border-radius: 0;
         min-height: 120px;
         align-items: stretch;
-        width: 100%;
-        max-width: none;
+        width: auto;
         background-color: var(--surface);
         border: 1px solid rgba(255, 255, 255, 0.05);
         box-shadow: var(--shadow);
@@ -195,11 +200,157 @@
       .show {
         display: block;
       }
+
+      /* Sessions Sidebar */
+      #sessions-sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0; /* match full app window height */
+        width: min(var(--sidebar-width, 280px), var(--sidebar-max, 280px));
+        max-width: var(--sidebar-max, 280px);
+        background: var(--surface);
+        border-right: 1px solid var(--outline);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        z-index: 10;
+      }
+
+      /* collapse is managed via body.sidebar-collapsed rules */
+      #sessions-sidebar.no-transition { transition: none !important; }
+      body.sidebar-collapsed #prompt-area { left: var(--sidebar-rail, 40px); }
+      body.sidebar-collapsed #sessions-sidebar { width: var(--sidebar-rail, 40px) !important; }
+      body.sidebar-collapsed #sessions-sidebar .sessions-title,
+      body.sidebar-collapsed #sessions-sidebar #save-session,
+      body.sidebar-collapsed #sessions-sidebar .sessions-list,
+      body.sidebar-collapsed #sessions-sidebar .sessions-footer { display: none; }
+      body.sidebar-collapsed #sessions-sidebar .sessions-header { border-bottom: none; padding: 10px; }
+      body.sidebar-collapsed #sessions-sidebar #toggle-sessions { width: 100%; height: 28px; }
+
+      .sessions-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: var(--sessions-header-pad);
+        border-bottom: 1px solid var(--outline);
+      }
+
+      .sessions-title {
+        font-weight: 700;
+        font-size: 14px;
+        color: var(--text-secondary);
+      }
+
+      .sessions-actions {
+        display: flex;
+        gap: 6px;
+      }
+
+      .sessions-btn {
+        border: 1px solid var(--outline);
+        background: var(--surface-high);
+        color: var(--text-secondary);
+        border-radius: 8px;
+        height: var(--sessions-button-size);
+        padding: 0 12px;
+        font-size: 12px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+      }
+
+      .sessions-icon-btn {
+        border: 1px solid var(--outline);
+        background: var(--surface-high);
+        color: var(--text-secondary);
+        border-radius: 8px;
+        width: var(--sessions-button-size);
+        height: var(--sessions-button-size);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        cursor: pointer;
+        box-sizing: border-box;
+      }
+
+      .sessions-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px;
+      }
+
+      .session-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        color: var(--text-secondary);
+      }
+
+      .session-item:hover { background: rgba(138,180,248,0.10); color: var(--text-primary); }
+      .session-item.active { background: rgba(138,180,248,0.18); color: var(--text-primary); }
+
+      .sessions-footer { padding: 8px; border-top: 1px solid var(--outline); }
+      .sessions-footer .sessions-btn { width: 100%; }
+
+      /* Collapse adjustments */
+      body.sidebar-collapsed #prompt-area { left: var(--sidebar-rail, 40px); }
+      body.sidebar-collapsed #sessions-sidebar { width: var(--sidebar-rail, 40px) !important; }
+      body.sidebar-collapsed #sessions-sidebar .sessions-title,
+      body.sidebar-collapsed #sessions-sidebar #save-session,
+      body.sidebar-collapsed #sessions-sidebar .sessions-list,
+      body.sidebar-collapsed #sessions-sidebar .sessions-footer { display: none; }
+      body.sidebar-collapsed #sessions-sidebar .sessions-header {
+        border-bottom: none;
+        padding: var(--sessions-header-pad);
+        padding-inline-end: 0; /* no end margin after collapse */
+        justify-content: flex-end; /* push toggle to rail edge */
+        gap: 0; /* remove inter-button gap in rail */
+      }
+      body.sidebar-collapsed #sessions-sidebar .sessions-actions { gap: 0; }
+      body.sidebar-collapsed #sessions-sidebar #toggle-sessions { margin: 0; }
+      body.sidebar-collapsed #sessions-sidebar #toggle-sessions { width: var(--sessions-button-size); height: var(--sessions-button-size); }
     </style>
+    <script>
+      // Ensure sidebar uses the CSS default width if a larger value was stored earlier
+      (function () {
+        try {
+          var CSS_DEFAULT = 280;
+          var key = 'sessionsSidebar.width';
+          var raw = localStorage.getItem(key);
+          var n = raw ? parseInt(raw, 10) : NaN;
+          if (!isFinite(n) || n > CSS_DEFAULT) {
+            localStorage.setItem(key, String(CSS_DEFAULT));
+          }
+        } catch (e) {
+          // noop
+        }
+      })();
+    </script>
     <script type="module" src="./dist/renderer.js"></script>
   </head>
 
   <body>
+    <aside id="sessions-sidebar">
+      <div class="sessions-header">
+        <div class="sessions-title">Recent sessions</div>
+        <div class="sessions-actions">
+          <button class="sessions-btn" id="save-session">+ New</button>
+          <button class="sessions-icon-btn" id="toggle-sessions" title="Toggle sidebar">«</button>
+        </div>
+      </div>
+      <div class="sessions-list" id="sessions-list" role="listbox" tabindex="0"></div>
+      <div class="sessions-footer"></div>
+    </aside>
+
     <div id="prompt-area">
       <textarea id="prompt-input" rows="3" placeholder="Press Ctrl + Enter to send prompt"></textarea>
       <div class="button-group">

@@ -119,9 +119,9 @@ export function addBrowserView(
   url: string,
   websites: string[],
   views: CustomBrowserView[],
-  options: { webPreferences?: WebPreferences; promptAreaHeight?: number } = {},
+  options: { webPreferences?: WebPreferences; promptAreaHeight?: number; sidebarWidth?: number } = {},
 ): CustomBrowserView {
-  const { webPreferences = {}, promptAreaHeight = 0 } = options;
+  const { webPreferences = {}, promptAreaHeight = 0, sidebarWidth = 0 } = options;
 
   const view: CustomBrowserView = new WebContentsView({
     webPreferences: {
@@ -139,11 +139,12 @@ export function addBrowserView(
   const availableHeight = Math.max(height - promptAreaHeight, 0);
 
   websites.push(url);
-  const viewWidth = Math.floor(width / websites.length);
+  const availableWidth = Math.max(width - sidebarWidth, 0);
+  const viewWidth = Math.floor(availableWidth / websites.length);
 
   views.forEach((v, index) => {
     v.setBounds({
-      x: index * viewWidth,
+      x: sidebarWidth + index * viewWidth,
       y: 0,
       width: viewWidth,
       height: availableHeight,
@@ -151,7 +152,7 @@ export function addBrowserView(
   });
 
   view.setBounds({
-    x: (websites.length - 1) * viewWidth,
+    x: sidebarWidth + (websites.length - 1) * viewWidth,
     y: 0,
     width: viewWidth,
     height: availableHeight,
@@ -172,9 +173,9 @@ export function removeBrowserView(
   viewToRemove: CustomBrowserView, // Changed to viewToRemove for clarity
   websites: string[],
   views: CustomBrowserView[],
-  options: { promptAreaHeight?: number } = {},
+  options: { promptAreaHeight?: number; sidebarWidth?: number } = {},
 ): void {
-  const { promptAreaHeight = 0 } = options;
+  const { promptAreaHeight = 0, sidebarWidth = 0 } = options;
 
   const viewIndex = views.indexOf(viewToRemove);
   if (viewIndex === -1) return;
@@ -192,11 +193,12 @@ export function removeBrowserView(
 
   const { width, height } = mainWindow.getContentBounds();
   const availableHeight = Math.max(height - promptAreaHeight, 0);
-  const viewWidth = Math.floor(width / views.length);
+  const availableWidth = Math.max(width - sidebarWidth, 0);
+  const viewWidth = Math.floor(availableWidth / views.length);
 
   views.forEach((v, index) => {
     v.setBounds({
-      x: index * viewWidth,
+      x: sidebarWidth + index * viewWidth,
       y: 0,
       width: viewWidth,
       height: availableHeight,

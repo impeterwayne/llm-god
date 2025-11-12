@@ -7,6 +7,7 @@ import {
   WebContentsView,
   nativeTheme,
   clipboard,
+  screen,
 } from "electron";
 import * as remote from "@electron/remote/main/index.js";
 import path from "path";
@@ -26,7 +27,8 @@ import { fileURLToPath } from "node:url"; // Import fileURLToPath
 import Store from "electron-store"; // Import electron-store
 
 const require = createRequire(import.meta.url);
-const store = new Store(); // Create an instance of electron-store
+const store = new Store(); // Create an instance of electron-store (prompts)
+const sessionStore = new Store({ name: "sessions" }); // Separate store for sessions
 
 interface CustomBrowserView extends WebContentsView {
   id: string; // Make id optional as it's assigned after creation
@@ -38,10 +40,13 @@ remote.initialize();
 
 let mainWindow: BrowserWindow;
 let formWindow: BrowserWindow | null; // Allow formWindow to be null
+let sessionsWindow: BrowserWindow | null = null;
+let linkSessionsToMain = true; // keep sessions window docked to main
 let pendingRowSelectedKey: string | null = null; // Store the key of the selected row for later use
 
 const views: CustomBrowserView[] = [];
 let promptAreaHeight = 0;
+let sidebarWidth = 280; // default reserve for left sidebar; renderer will update
 let browserViewsInitialized = false;
 
 const __filename = fileURLToPath(import.meta.url);
@@ -62,11 +67,12 @@ async function adjustBrowserViewBounds(): Promise<void> {
 
   const { width, height } = mainWindow.getContentBounds();
   const availableHeight = Math.max(height - promptAreaHeight, 0);
-  const viewWidth = websites.length > 0 ? Math.floor(width / websites.length) : width;
+  const availableWidth = Math.max(width - sidebarWidth, 0);
+  const viewWidth = websites.length > 0 ? Math.floor(availableWidth / websites.length) : availableWidth;
 
   views.forEach((view, index) => {
     view.setBounds({
-      x: index * viewWidth,
+      x: sidebarWidth + index * viewWidth,
       y: 0,
       width: viewWidth,
       height: availableHeight,
@@ -81,7 +87,8 @@ async function initializeBrowserViews(): Promise<void> {
   }
 
   const { width, height } = mainWindow.getContentBounds();
-  const viewWidth = websites.length > 0 ? Math.floor(width / websites.length) : width;
+  const availableWidth = Math.max(width - sidebarWidth, 0);
+  const viewWidth = websites.length > 0 ? Math.floor(availableWidth / websites.length) : availableWidth;
   const availableHeight = Math.max(height - promptAreaHeight, 0);
 
   browserViewsInitialized = true;
@@ -97,7 +104,7 @@ async function initializeBrowserViews(): Promise<void> {
     view.id = `${url}`;
     mainWindow.contentView.addChildView(view);
     view.setBounds({
-      x: index * viewWidth,
+      x: sidebarWidth + index * viewWidth,
       y: 0,
       width: viewWidth,
       height: availableHeight,
@@ -113,6 +120,148 @@ async function initializeBrowserViews(): Promise<void> {
 
   await adjustBrowserViewBounds();
   updateZoomFactor();
+}
+
+// ----- Sessions storage/types -----
+type SessionId = string;
+type ProviderId =
+  | "chatgpt"
+  | "gemini"
+  | "claude"
+  | "perplexity"
+  | "grok"
+  | "deepseek"
+  | "lmarena"
+  | string;
+
+interface TabState {
+  provider: ProviderId;
+  url: string;
+  zoom?: number;
+}
+
+interface SessionMeta {
+  id: SessionId;
+  title: string;
+  pinned: boolean;
+  createdAt: number;
+  updatedAt: number;
+  lastMessageSummary?: string;
+}
+
+interface SessionState {
+  activeId: SessionId | null;
+  order: SessionId[];
+  pinned: SessionId[];
+  items: Record<SessionId, SessionMeta>;
+  layouts: Record<SessionId, { tabs: TabState[] } >;
+}
+
+function getDefaultSessionState(): SessionState {
+  return {
+    activeId: null,
+    order: [],
+    pinned: [],
+    items: {},
+    layouts: {},
+  };
+}
+
+function getSessionState(): SessionState {
+  const state = sessionStore.get("state") as SessionState | undefined;
+  if (!state) return getDefaultSessionState();
+  // ensure shape
+  return {
+    activeId: state.activeId ?? null,
+    order: Array.isArray(state.order) ? state.order : [],
+    pinned: Array.isArray(state.pinned) ? state.pinned : [],
+    items: state.items ?? {},
+    layouts: state.layouts ?? {},
+  };
+}
+
+function setSessionState(next: SessionState) {
+  sessionStore.set("state", next);
+}
+
+function ensureDefaultSession(): void {
+  const state = getSessionState();
+  const hasAny = Object.keys(state.items).length > 0;
+  if (hasAny) return;
+  const id: SessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const now = Date.now();
+  const tabs = getCurrentTabsSnapshot();
+  const defaultTitle = `Session ${new Date(now).toISOString().slice(0, 16).replace('T', ' ')}`;
+  const meta: SessionMeta = {
+    id,
+    title: defaultTitle,
+    pinned: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+  state.items[id] = meta;
+  state.layouts[id] = { tabs };
+  state.order = [id];
+  state.activeId = id;
+  setSessionState(state);
+}
+
+function inferProviderFromUrl(url: string): ProviderId {
+  try {
+    const u = new URL(url);
+    const host = u.hostname;
+    if (/chatgpt\.com|chat\.openai\.com/i.test(host)) return "chatgpt";
+    if (/gemini\.google\.com/i.test(host)) return "gemini";
+    if (/perplexity\.ai/i.test(host)) return "perplexity";
+    if (/claude\.ai/i.test(host)) return "claude";
+    if (/grok\.com/i.test(host)) return "grok";
+    if (/deepseek\.com/i.test(host)) return "deepseek";
+    if (/lmarena\.ai/i.test(host)) return "lmarena";
+    return host;
+  } catch {
+    return url;
+  }
+}
+
+const PROVIDER_BASE_URL: Record<string, string> = {
+  chatgpt: "https://chatgpt.com/",
+  gemini: "https://gemini.google.com/",
+  perplexity: "https://www.perplexity.ai/",
+  claude: "https://claude.ai/chats/",
+  grok: "https://grok.com/",
+  deepseek: "https://chat.deepseek.com/",
+  lmarena: "https://lmarena.ai/?mode=direct",
+};
+
+function getCurrentTabsSnapshot(): TabState[] {
+  return views.map((view) => {
+    const url = view.webContents.getURL() || view.id;
+    const zoom = 1; // currently fixed; could be read if varied per view
+    return {
+      provider: inferProviderFromUrl(url),
+      url,
+      zoom,
+    };
+  });
+}
+
+function restoreLayout(tabs: TabState[]): void {
+  // Close all existing views
+  const toRemove = [...views];
+  toRemove.forEach((v) => {
+    removeBrowserView(mainWindow, v, websites, views, { promptAreaHeight, sidebarWidth });
+  });
+
+  // Clear websites list
+  websites.splice(0, websites.length);
+
+  // Recreate views based on tabs
+  tabs.forEach((tab) => {
+    const url = tab.url && tab.url.length > 0 ? tab.url : PROVIDER_BASE_URL[tab.provider] || tab.url;
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+  });
+
+  void adjustBrowserViewBounds();
 }
 
 function createWindow(): void {
@@ -158,11 +307,21 @@ function createWindow(): void {
     resizeTimeout = setTimeout(() => {
       void adjustBrowserViewBounds();
       updateZoomFactor();
+      layoutWindows();
     }, 200);
   });
 
   mainWindow.webContents.once("did-finish-load", () => {
     void initializeBrowserViews();
+  });
+
+  // Keep sessions window docked on move as well
+  mainWindow.on("move", () => {
+    // Throttle slightly using same timer
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(() => {
+      layoutWindows();
+    }, 50);
   });
 }
 
@@ -195,10 +354,93 @@ app.whenReady().then(() => {
   electronLocalShortcut.register(mainWindow, "Ctrl+W", () => {
     app.quit();
   });
+
 });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+function createSessionsWindow() {
+  if (sessionsWindow && !sessionsWindow.isDestroyed()) {
+    sessionsWindow.focus();
+    return;
+  }
+  const bounds = mainWindow.getBounds();
+  sessionsWindow = new BrowserWindow({
+    width: 320,
+    height: bounds.height,
+    x: bounds.x - 320,
+    y: bounds.y,
+    titleBarStyle: "default",
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, "..", "dist", "sessions_preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+  sessionsWindow.on("closed", () => { sessionsWindow = null; });
+  sessionsWindow.loadFile(path.join(__dirname, "..", "src", "sessions.html"));
+  // position after load to ensure proper bounds
+  ensureDefaultSession();
+  layoutWindows();
+}
+
+ipcMain.on("toggle-sessions-window", () => {
+  if (sessionsWindow && !sessionsWindow.isDestroyed()) {
+    sessionsWindow.close();
+    sessionsWindow = null;
+    return;
+  }
+  createSessionsWindow();
+});
+
+function layoutWindows() {
+  if (!sessionsWindow || sessionsWindow.isDestroyed() || !linkSessionsToMain) return;
+  try {
+    const m = mainWindow.getBounds();
+    const display = screen.getDisplayMatching(m);
+    const area = display.workArea;
+    const sw = Math.max(280, Math.min(420, sessionsWindow.getBounds().width || 320));
+    const minMainWidth = 800;
+    const maxMainWidth = area.width - sw;
+    const mainWidth = Math.max(Math.min(m.width, maxMainWidth), Math.min(minMainWidth, maxMainWidth));
+    const mainHeight = Math.min(m.height, area.height);
+
+    // Prefer left docking
+    const dockLeft = (m.x - sw) >= area.x;
+    let mx: number, sx: number;
+    const my = Math.max(area.y, Math.min(m.y, area.y + area.height - mainHeight));
+    const sy = my;
+
+    if (dockLeft) {
+      sx = area.x;
+      mx = area.x + sw;
+    } else {
+      mx = area.x;
+      sx = area.x + mainWidth;
+    }
+
+    // Apply bounds in order to avoid overlap
+    mainWindow.setBounds({ x: mx, y: my, width: mainWidth, height: mainHeight });
+    sessionsWindow.setBounds({ x: sx, y: sy, width: sw, height: mainHeight });
+  } catch (err) {
+    console.warn("Failed to layout windows", err);
+  }
+}
+
+// Sidebar size updates from renderer
+ipcMain.on("sidebar-size", (_, width: number) => {
+  const normalized = Math.max(0, Math.round(width || 0));
+  if (normalized !== sidebarWidth) {
+    sidebarWidth = normalized;
+    void adjustBrowserViewBounds();
+    // Run a second pass shortly after to handle layout thrash on expand
+    setTimeout(() => {
+      void adjustBrowserViewBounds();
+    }, 50);
+  }
 });
 
 ipcMain.on("prompt-area-size", (_, height: number) => {
@@ -295,6 +537,93 @@ ipcMain.on("send-prompt", (_, prompt: string) => {
   });
 });
 
+// ----- Sessions IPC -----
+ipcMain.handle("sessions:list", () => {
+  ensureDefaultSession();
+  const state = getSessionState();
+  const items: SessionMeta[] = [];
+  const pushIf = (id: string) => {
+    const meta = state.items[id];
+    if (meta) items.push(meta);
+  };
+  state.pinned.forEach(pushIf);
+  state.order.forEach(pushIf);
+  return { items };
+});
+
+ipcMain.handle("sessions:create", () => {
+  const state = getSessionState();
+  const id: SessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const now = Date.now();
+  const tabs = getCurrentTabsSnapshot();
+  const defaultTitle = `Session ${new Date(now).toISOString().slice(0, 16).replace('T', ' ')}`;
+  const meta: SessionMeta = {
+    id,
+    title: defaultTitle,
+    pinned: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  state.items[id] = meta;
+  state.layouts[id] = { tabs };
+  state.order = [id, ...state.order.filter((x) => x !== id && !state.pinned.includes(x))];
+  state.activeId = id;
+  setSessionState(state);
+  mainWindow.webContents.send("sessions:changed", { updatedIds: [id] });
+  return { id };
+});
+
+ipcMain.handle("sessions:get-layout", (_evt, { id }: { id: SessionId }) => {
+  const state = getSessionState();
+  return state.layouts[id] ?? { tabs: [] };
+});
+
+ipcMain.handle("sessions:save-layout", (_evt, { id, tabs }: { id: SessionId; tabs: TabState[] }) => {
+  const state = getSessionState();
+  if (!state.items[id]) {
+    throw new Error("Unknown session id");
+  }
+  state.layouts[id] = { tabs: Array.isArray(tabs) ? tabs : [] };
+  const meta = state.items[id];
+  meta.updatedAt = Date.now();
+  setSessionState(state);
+  mainWindow.webContents.send("sessions:changed", { updatedIds: [id] });
+});
+
+ipcMain.handle("sessions:open", (_evt, { id }: { id: SessionId }) => {
+  const state = getSessionState();
+  const layout = state.layouts[id];
+  if (!layout) {
+    throw new Error("No layout saved for session");
+  }
+  state.activeId = id;
+  setSessionState(state);
+  restoreLayout(layout.tabs);
+  mainWindow.webContents.send("sessions:active-changed", { id });
+});
+
+ipcMain.handle("sessions:rename", (_evt, { id, title }: { id: SessionId; title: string }) => {
+  const state = getSessionState();
+  const meta = state.items[id];
+  if (!meta) throw new Error("Unknown session id");
+  meta.title = (title ?? "").trim() || meta.title;
+  meta.updatedAt = Date.now();
+  setSessionState(state);
+  mainWindow.webContents.send("sessions:changed", { updatedIds: [id] });
+});
+
+ipcMain.handle("sessions:delete", (_evt, { id }: { id: SessionId }) => {
+  const state = getSessionState();
+  delete state.items[id];
+  delete state.layouts[id];
+  state.order = state.order.filter((x) => x !== id);
+  state.pinned = state.pinned.filter((x) => x !== id);
+  if (state.activeId === id) state.activeId = null;
+  setSessionState(state);
+  mainWindow.webContents.send("sessions:changed", { updatedIds: [id] });
+});
+
 ipcMain.on("delete-prompt-by-value", (event, value: string) => {
   value = value.normalize("NFKC");
   // Get all key-value pairs from the store
@@ -317,7 +646,7 @@ ipcMain.on("open-lm-arena", (_, prompt: string) => {
   if (prompt === "open lm arena now") {
     console.log("Opening LMArena");
     let url = "https://lmarena.ai/?mode=direct";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     void adjustBrowserViewBounds();
   }
 });
@@ -327,7 +656,7 @@ ipcMain.on("close-lm-arena", (_, prompt: string) => {
     console.log("Closing LMArena");
     const lmArenaView = views.find((view) => view.id.match("lmarena"));
     if (lmArenaView) {
-      removeBrowserView(mainWindow, lmArenaView, websites, views, { promptAreaHeight });
+      removeBrowserView(mainWindow, lmArenaView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
     }
   }
@@ -337,7 +666,7 @@ ipcMain.on("open-claude", (_, prompt: string) => {
   if (prompt === "open claude now") {
     console.log("Opening Claude");
     let url = "https://claude.ai/chats/";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     void adjustBrowserViewBounds();
   }
 });
@@ -347,7 +676,7 @@ ipcMain.on("close-claude", (_, prompt: string) => {
     console.log("Closing Claude");
     const claudeView = views.find((view) => view.id.match("claude"));
     if (claudeView) {
-      removeBrowserView(mainWindow, claudeView, websites, views, { promptAreaHeight });
+      removeBrowserView(mainWindow, claudeView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
     }
   }
@@ -357,7 +686,7 @@ ipcMain.on("open-grok", (_, prompt: string) => {
   if (prompt === "open grok now") {
     console.log("Opening Grok");
     let url = "https://grok.com/";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     void adjustBrowserViewBounds();
   }
 });
@@ -367,7 +696,7 @@ ipcMain.on("close-grok", (_, prompt: string) => {
     console.log("Closing Grok");
     const grokView = views.find((view) => view.id.match("grok"));
     if (grokView) {
-      removeBrowserView(mainWindow, grokView, websites, views, { promptAreaHeight });
+      removeBrowserView(mainWindow, grokView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
     }
   }
@@ -377,7 +706,7 @@ ipcMain.on("open-deepseek", (_, prompt: string) => {
   if (prompt === "open deepseek now") {
     console.log("Opening DeepSeek");
     let url = "https://chat.deepseek.com/";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight });
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     void adjustBrowserViewBounds();
   }
 });
@@ -387,7 +716,7 @@ ipcMain.on("close-deepseek", (_, prompt: string) => {
     console.log("Closing Deepseek");
     const deepseekView = views.find((view) => view.id.match("deepseek"));
     if (deepseekView) {
-      removeBrowserView(mainWindow, deepseekView, websites, views, { promptAreaHeight });
+      removeBrowserView(mainWindow, deepseekView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
     }
   }

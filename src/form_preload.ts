@@ -47,3 +47,5 @@ contextBridge.exposeInMainWorld("electron", {
     },
   },
 });
+
+export {};
