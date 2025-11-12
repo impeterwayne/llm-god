@@ -976,17 +976,24 @@ export function sendPromptInView(view: CustomBrowserView) {
     }
   `);
 } else if (view.id && view.id.match("deepseek")) {
-    view.webContents.executeJavaScript(`
-        {
-        var buttons = Array.from(document.querySelectorAll('div[role="button"]'));
-        var btn = buttons[2]
-        if (btn) {
-            btn.focus();
-            btn.click();
-          } else {
-            console.log("Element not found");
-          }
-    }`);
+   view.webContents.executeJavaScript(`
+     {
+       var textarea = document.querySelector('textarea');
+       if (textarea) {
+         textarea.focus();
+         var event = new KeyboardEvent('keydown', {
+           key: 'Enter',
+           code: 'Enter',
+           keyCode: 13,
+           bubbles: true,
+           cancelable: true
+         });
+         textarea.dispatchEvent(event);
+         console.log('[DeepSeek] Enter key simulated for message submission');
+       } else {
+         console.log('[DeepSeek] Textarea not found');
+       }
+     }`);
   } else if (view.id && view.id.match("lmarena")) {
     view.webContents.executeJavaScript(`
         {
