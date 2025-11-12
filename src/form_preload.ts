@@ -5,7 +5,6 @@ contextBridge.exposeInMainWorld("electron", {
     send: (channel: string, data: any) => {
       const validChannels = [
         "save-prompt",
-        "open-form-window",
         "enter-prompt",
         "inject-prompt",
         "send-prompt",

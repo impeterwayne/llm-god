@@ -131,7 +131,6 @@ type ProviderId =
   | "perplexity"
   | "grok"
   | "deepseek"
-  | "lmarena"
   | string;
 
 interface TabState {
@@ -216,7 +215,6 @@ function inferProviderFromUrl(url: string): ProviderId {
     if (/claude\.ai/i.test(host)) return "claude";
     if (/grok\.com/i.test(host)) return "grok";
     if (/deepseek\.com/i.test(host)) return "deepseek";
-    if (/lmarena\.ai/i.test(host)) return "lmarena";
     return host;
   } catch {
     return url;
@@ -230,7 +228,6 @@ const PROVIDER_BASE_URL: Record<string, string> = {
   claude: "https://claude.ai/chats/",
   grok: "https://grok.com/",
   deepseek: "https://chat.deepseek.com/",
-  lmarena: "https://lmarena.ai/?mode=direct",
 };
 
 function getCurrentTabsSnapshot(): TabState[] {
@@ -474,9 +471,6 @@ ipcMain.on("prompt-area-size", (_, height: number) => {
   }
 });
 
-ipcMain.on("open-form-window", () => {
-  createFormWindow();
-});
 
 ipcMain.on("close-form-window", () => {
   if (formWindow) {
@@ -653,26 +647,6 @@ ipcMain.on("delete-prompt-by-value", (event, value: string) => {
     console.log(`Deleted entry with key: ${matchingKey} and value: ${value}`);
   } else {
     console.error(`No matching entry found for value: ${value}`);
-  }
-});
-
-ipcMain.on("open-lm-arena", (_, prompt: string) => {
-  if (prompt === "open lm arena now") {
-    console.log("Opening LMArena");
-    let url = "https://lmarena.ai/?mode=direct";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
-    void adjustBrowserViewBounds();
-  }
-});
-
-ipcMain.on("close-lm-arena", (_, prompt: string) => {
-  if (prompt === "close lm arena now") {
-    console.log("Closing LMArena");
-    const lmArenaView = views.find((view) => view.id.match("lmarena"));
-    if (lmArenaView) {
-      removeBrowserView(mainWindow, lmArenaView, websites, views, { promptAreaHeight, sidebarWidth });
-      void adjustBrowserViewBounds();
-    }
   }
 });
 
