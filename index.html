@@ -61,14 +61,43 @@
         }
       }
 
+      .provider-toggle {
+        flex: 1;
+        min-height: 40px;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 8px;
+        border-radius: var(--radius-medium);
+        border: 1px solid var(--outline);
+        background: linear-gradient(180deg, var(--surface-high), var(--surface-variant));
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease,
+          border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+        opacity: 0.6; /* default disabled state */
+      }
+
+      .provider-toggle.active {
+        opacity: 1;
+        border-color: var(--accent);
+        color: var(--text-primary);
+        box-shadow: 0 4px 12px rgba(138, 180, 248, 0.25);
+      }
+
+      .provider-toggle:hover {
+        border-color: var(--accent);
+        color: var(--text-primary);
+        transform: translateY(-1px);
+      }
+
       #prompt-area {
         position: fixed;
         left: min(var(--sidebar-width, 280px), var(--sidebar-max, 280px));
         right: 0;
         bottom: 0;
         display: flex;
-        gap: 14px;
-        padding: 22px;
+        gap: 12px;
+        padding: 14px;
         border-radius: 0;
         min-height: 120px;
         align-items: stretch;
@@ -76,6 +105,7 @@
         background-color: var(--surface);
         border: 1px solid rgba(255, 255, 255, 0.05);
         box-shadow: var(--shadow);
+        flex-direction: column; /* make room for header + input */
       }
 
       #prompt-area.drag-active {
@@ -197,6 +227,21 @@
 
       .show {
         display: block;
+      }
+
+      /* Chat header inside prompt area */
+      .chat-header {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+
+      /* Chat input row */
+      .chat-input-row {
+        display: flex;
+        gap: 14px;
+        align-items: stretch;
       }
 
       /* Sessions Sidebar */
@@ -342,7 +387,7 @@
     <script type="module" src="./dist/renderer.js"></script>
   </head>
 
-  <body>
+  <body class="sidebar-collapsed">
     <aside id="sessions-sidebar">
       <div class="sessions-header">
         <div class="sessions-title">Recent sessions</div>
@@ -356,19 +401,21 @@
     </aside>
 
     <div id="prompt-area">
-      <textarea id="prompt-input" rows="3" placeholder="Press Ctrl + Enter to send prompt"></textarea>
-      <div class="button-group">
-        <div class="dropdown">
-          <button id="dropdown-button">Show Models ▼</button>
-          <div class="dropdown-content">
-            <div class="dropdown-item" id="showClaude">Show Claude</div>
-            <div class="dropdown-item" id="showGrok">Show Grok</div>
-            <div class="dropdown-item" id="showDeepSeek">Show DeepSeek</div>
-          </div>
+      <div class="chat-header">
+        <button class="provider-toggle" data-provider="chatgpt">ChatGPT</button>
+        <button class="provider-toggle" data-provider="gemini">Gemini</button>
+        <button class="provider-toggle" data-provider="perplexity">Perplexity</button>
+        <button class="provider-toggle" data-provider="claude">Claude</button>
+        <button class="provider-toggle" data-provider="grok">Grok</button>
+        <button class="provider-toggle" data-provider="deepseek">DeepSeek</button>
+      </div>
+      <div class="chat-input-row">
+        <textarea id="prompt-input" rows="3" placeholder="Press Ctrl + Enter to send prompt"></textarea>
+        <div class="button-group">
+          <button class="utility-button" id="copy-agent-prompt">
+            Copy Agent Prompt
+          </button>
         </div>
-        <button class="utility-button" id="copy-agent-prompt">
-          Copy Agent Prompt
-        </button>
       </div>
     </div>
   </body>

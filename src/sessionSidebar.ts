@@ -167,7 +167,7 @@ export function initSessionSidebar() {
   // Restore collapsed state
   try {
     const persisted = localStorage.getItem("sessionsSidebar.collapsed");
-    const collapsed = persisted === "true";
+    const collapsed = persisted === "true" || persisted === null; // default to collapsed if not set
     if (collapsed) {
       sidebar.classList.add("collapsed");
       document.body.classList.add("sidebar-collapsed");

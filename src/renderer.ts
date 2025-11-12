@@ -89,6 +89,8 @@ const notifyPromptAreaSize = (): void => {
     );
   } catch {}
   ipcRenderer.send("prompt-area-size", rect.height);
+  // New unified measurement so main can also reserve right dock in future
+  ipcRenderer.send("ui-chrome-size", { bottom: Math.max(0, Math.round(rect.height)), right: 0 });
 };
 
 const initializePromptAreaObserver = (): void => {
@@ -195,55 +197,76 @@ export function closeGrokMessage(message: string): void {
 const textArea = document.getElementById(
   "prompt-input",
 ) as HTMLTextAreaElement | null;
-const openClaudeButton = document.getElementById(
-  "showClaude",
-) as HTMLButtonElement | null;
-const openGrokButton = document.getElementById(
-  "showGrok",
-) as HTMLButtonElement | null;
-const openDeepSeekButton = document.getElementById(
-  "showDeepSeek",
-) as HTMLButtonElement | null;
 
 const copyAgentPromptButton = document.getElementById(
   "copy-agent-prompt",
 ) as HTMLButtonElement | null;
 
-if (openClaudeButton) {
-  openClaudeButton.addEventListener("click", (event: MouseEvent) => {
-    if (openClaudeButton.textContent === "Show Claude") {
-      openClaudeMessage("open claude now");
-      openClaudeButton.textContent = "Hide Claude";
-    } else {
-      closeClaudeMessage("close claude now");
-      openClaudeButton.textContent = "Show Claude";
-    }
-  });
-}
+// Provider toggle functionality
+const providerToggles = document.querySelectorAll<HTMLButtonElement>('.provider-toggle');
 
-if (openGrokButton) {
-  openGrokButton.addEventListener("click", (event: MouseEvent) => {
-    if (openGrokButton.textContent === "Show Grok") {
-      openGrokMessage("open grok now");
-      openGrokButton.textContent = "Hide Grok";
-    } else {
-      closeGrokMessage("close grok now");
-      openGrokButton.textContent = "Show Grok";
-    }
-  });
-}
+const updateProviderToggles = async (): Promise<void> => {
+  try {
+    const urls = ((await ipcRenderer.invoke("get-current-urls")) ?? []) as string[];
+    const activeProviders = urls.map(url => inferProviderFromUrl(url));
 
-if (openDeepSeekButton) {
-  openDeepSeekButton.addEventListener("click", (event: MouseEvent) => {
-    if (openDeepSeekButton.textContent === "Show DeepSeek") {
-      openDeepSeekMessage("open deepseek now");
-      openDeepSeekButton.textContent = "Hide DeepSeek";
-    } else {
-      closeDeepSeekMessage("close deepseek now");
-      openDeepSeekButton.textContent = "Show DeepSeek";
+    providerToggles.forEach(toggle => {
+      const provider = toggle.dataset.provider;
+      if (provider && activeProviders.includes(provider)) {
+        toggle.classList.add('active');
+      } else {
+        toggle.classList.remove('active');
+      }
+    });
+  } catch (error) {
+    console.error("Failed to update provider toggles", error);
+  }
+};
+
+const inferProviderFromUrl = (url: string): string => {
+  try {
+    const u = new URL(url);
+    const host = u.hostname;
+    if (/chatgpt\.com|chat\.openai\.com/i.test(host)) return "chatgpt";
+    if (/gemini\.google\.com/i.test(host)) return "gemini";
+    if (/perplexity\.ai/i.test(host)) return "perplexity";
+    if (/claude\.ai/i.test(host)) return "claude";
+    if (/grok\.com/i.test(host)) return "grok";
+    if (/deepseek\.com/i.test(host)) return "deepseek";
+    return host;
+  } catch {
+    return url;
+  }
+};
+
+providerToggles.forEach(toggle => {
+  toggle.addEventListener('click', async () => {
+    const provider = toggle.dataset.provider;
+    if (!provider) return;
+
+    try {
+      const urls = ((await ipcRenderer.invoke("get-current-urls")) ?? []) as string[];
+      const activeProviders = urls.map(url => inferProviderFromUrl(url));
+      const isActive = activeProviders.includes(provider);
+
+      if (isActive) {
+        // Close provider
+        ipcRenderer.send(`close-${provider}`, `close ${provider} now`);
+      } else {
+        // Open provider
+        ipcRenderer.send(`open-${provider}`, `open ${provider} now`);
+      }
+
+      // Update toggles after a short delay to allow IPC to process
+      setTimeout(updateProviderToggles, 100);
+    } catch (error) {
+      console.error(`Failed to toggle ${provider}`, error);
     }
   });
-}
+});
+
+// Initial update
+updateProviderToggles();
 
 if (textArea) {
   textArea.addEventListener("input", (event: Event) => {

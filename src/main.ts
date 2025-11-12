@@ -45,7 +45,8 @@ let linkSessionsToMain = true; // keep sessions window docked to main
 let pendingRowSelectedKey: string | null = null; // Store the key of the selected row for later use
 
 const views: CustomBrowserView[] = [];
-let promptAreaHeight = 0;
+let promptAreaHeight = 0; // reserved bottom space for chat pane
+let reservedRight = 0; // reserved right space when chat pane is docked right (future)
 let sidebarWidth = 280; // default reserve for left sidebar; renderer will update
 let browserViewsInitialized = false;
 
@@ -68,7 +69,7 @@ async function adjustBrowserViewBounds(): Promise<void> {
   const { width, height } = mainWindow.getContentBounds();
   const availableHeight = Math.max(height - promptAreaHeight, 0);
   const offset = Math.ceil(Math.max(0, sidebarWidth));
-  const availableWidth = Math.max(width - offset, 0);
+  const availableWidth = Math.max(width - offset - Math.max(0, Math.ceil(reservedRight)), 0);
   const viewWidth = websites.length > 0 ? Math.floor(availableWidth / websites.length) : availableWidth;
 
   views.forEach((view, index) => {
@@ -89,7 +90,7 @@ async function initializeBrowserViews(): Promise<void> {
 
   const { width, height } = mainWindow.getContentBounds();
   const offset = Math.ceil(Math.max(0, sidebarWidth));
-  const availableWidth = Math.max(width - offset, 0);
+  const availableWidth = Math.max(width - offset - Math.max(0, Math.ceil(reservedRight)), 0);
   const viewWidth = websites.length > 0 ? Math.floor(availableWidth / websites.length) : availableWidth;
   const availableHeight = Math.max(height - promptAreaHeight, 0);
 
@@ -473,6 +474,30 @@ ipcMain.on("prompt-area-size", (_, height: number) => {
   }
 });
 
+// Unified UI chrome reservation (bottom/right). Renderer may send this
+// in addition to or instead of `prompt-area-size`.
+ipcMain.on("ui-chrome-size", (_evt, payload: { bottom?: number; right?: number }) => {
+  const bottom = Math.max(0, Math.round(payload?.bottom ?? 0));
+  const right = Math.max(0, Math.round(payload?.right ?? 0));
+  let changed = false;
+  if (bottom !== promptAreaHeight) {
+    promptAreaHeight = bottom;
+    changed = true;
+  }
+  if (right !== reservedRight) {
+    reservedRight = right;
+    changed = true;
+  }
+  if (changed) {
+    if (browserViewsInitialized) {
+      void adjustBrowserViewBounds();
+      updateZoomFactor();
+    } else {
+      void initializeBrowserViews();
+    }
+  }
+});
+
 
 ipcMain.on("close-form-window", () => {
   if (formWindow) {
@@ -707,6 +732,66 @@ ipcMain.on("close-deepseek", (_, prompt: string) => {
     const deepseekView = views.find((view) => view.id.match("deepseek"));
     if (deepseekView) {
       removeBrowserView(mainWindow, deepseekView, websites, views, { promptAreaHeight, sidebarWidth });
+      void adjustBrowserViewBounds();
+    }
+  }
+});
+
+ipcMain.on("open-chatgpt", (_, prompt: string) => {
+  if (prompt === "open chatgpt now") {
+    console.log("Opening ChatGPT");
+    let url = "https://chatgpt.com/";
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    void adjustBrowserViewBounds();
+  }
+});
+
+ipcMain.on("close-chatgpt", (_, prompt: string) => {
+  if (prompt === "close chatgpt now") {
+    console.log("Closing ChatGPT");
+    const chatgptView = views.find((view) => view.id.match("chatgpt"));
+    if (chatgptView) {
+      removeBrowserView(mainWindow, chatgptView, websites, views, { promptAreaHeight, sidebarWidth });
+      void adjustBrowserViewBounds();
+    }
+  }
+});
+
+ipcMain.on("open-gemini", (_, prompt: string) => {
+  if (prompt === "open gemini now") {
+    console.log("Opening Gemini");
+    let url = "https://gemini.google.com/";
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    void adjustBrowserViewBounds();
+  }
+});
+
+ipcMain.on("close-gemini", (_, prompt: string) => {
+  if (prompt === "close gemini now") {
+    console.log("Closing Gemini");
+    const geminiView = views.find((view) => view.id.match("gemini"));
+    if (geminiView) {
+      removeBrowserView(mainWindow, geminiView, websites, views, { promptAreaHeight, sidebarWidth });
+      void adjustBrowserViewBounds();
+    }
+  }
+});
+
+ipcMain.on("open-perplexity", (_, prompt: string) => {
+  if (prompt === "open perplexity now") {
+    console.log("Opening Perplexity");
+    let url = "https://www.perplexity.ai/";
+    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    void adjustBrowserViewBounds();
+  }
+});
+
+ipcMain.on("close-perplexity", (_, prompt: string) => {
+  if (prompt === "close perplexity now") {
+    console.log("Closing Perplexity");
+    const perplexityView = views.find((view) => view.id.match("perplexity"));
+    if (perplexityView) {
+      removeBrowserView(mainWindow, perplexityView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
     }
   }
