@@ -14,7 +14,6 @@ Currently, the following LLM web interfaces are supported:
 - ChatGPT
 - Google Gemini
 - Anthropic Claude
-- LMArena
 - Perplexity
 - X.ai Grok
 - DeepSeek
@@ -40,7 +39,7 @@ If you want to close the app, press Ctrl + W on your keyboard.
 
 ### Custom styling (no browser extensions required)
 
-LLM-God now ships with an optional `custom-styles.json` file that lives next to the app's settings inside Electron's user data folder (for example `%APPDATA%/llm-god/custom-styles.json` on Windows). Each entry in that file contains a regular-expression `match` string and the raw CSS that should be injected into any embedded browser tab whose URL matches the expression. You can use aliases such as `"@llms"` to target every bundled LLM domain at once, but the default configuration now demonstrates per-site overrides with the dedicated aliases (`"@chatgpt"`, `"@gemini"`, `"@perplexity"`, `"@claude"`, `"@grok"`, `"@deepseek"`, and `"@lmarena"`) so you can tailor selectors without needing Stylus or any other extension.
+LLM-God now ships with an optional `custom-styles.json` file that lives next to the app's settings inside Electron's user data folder (for example `%APPDATA%/llm-god/custom-styles.json` on Windows). Each entry in that file contains a regular-expression `match` string and the raw CSS that should be injected into any embedded browser tab whose URL matches the expression. You can use aliases such as `"@llms"` to target every bundled LLM domain at once, but the default configuration now demonstrates per-site overrides with the dedicated aliases (`"@chatgpt"`, `"@gemini"`, `"@perplexity"`, `"@claude"`, `"@grok"`, `"@deepseek"`) so you can tailor selectors without needing Stylus or any other extension.
 
 ```jsonc
 {
@@ -125,7 +124,3 @@ While developing, I liked to have the devtools of the app be visible and also ha
 
 Please check out the Issues tab for existing issues to tackle, and feel free to suggest new issues as well! Make a pull request to this repo once a feature or bug fix is done.
 
-## Updates
-
-5/17: Migrated to using TypeScript across the app.
-6/15: Added support for LMArena and also for adding custom prompts that can be saved.

@@ -130,7 +130,6 @@
       }
 
       #dropdown-button,
-      .prompt-select,
       .utility-button {
         width: 100%;
         min-height: 46px;
@@ -148,7 +147,6 @@
       }
 
       #dropdown-button:hover,
-      .prompt-select:hover,
       .utility-button:hover {
         border-color: var(--accent);
         color: var(--text-primary);
@@ -357,14 +355,10 @@
         <div class="dropdown">
           <button id="dropdown-button">Show Models ▼</button>
           <div class="dropdown-content">
-            <div class="dropdown-item" id="showLMArena">Show LMArena</div>
             <div class="dropdown-item" id="showClaude">Show Claude</div>
             <div class="dropdown-item" id="showGrok">Show Grok</div>
             <div class="dropdown-item" id="showDeepSeek">Show DeepSeek</div>
           </div>
-        </div>
-        <div class="prompt-picker">
-          <button class="prompt-select">Select Prompts</button>
         </div>
         <button class="utility-button" id="copy-agent-prompt">
           Copy Agent Prompt
