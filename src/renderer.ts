@@ -277,7 +277,7 @@ if (textArea) {
     if (event.ctrlKey) {
       if (event.key === "Enter") {
         event.preventDefault();
-        ipcRenderer.send("send-prompt");
+        ipcRenderer.send("send-prompt", textArea.value.trim());
         console.log("Ctrl + Enter pressed");
         textArea.value = "";
       }

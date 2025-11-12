@@ -49,6 +49,7 @@ let promptAreaHeight = 0; // reserved bottom space for chat pane
 let reservedRight = 0; // reserved right space when chat pane is docked right (future)
 let sidebarWidth = 280; // default reserve for left sidebar; renderer will update
 let browserViewsInitialized = false;
+let postSendLayoutTimer: NodeJS.Timeout | null = null; // delay snapshot after prompt send
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -117,6 +118,8 @@ async function initializeBrowserViews(): Promise<void> {
     view.webContents.loadURL(url);
 
     ensureDetachedDevTools(view);
+    // Keep last URL persistence updated for the active session
+    wireViewUrlPersistence(view);
 
     views.push(view);
   });
@@ -156,7 +159,7 @@ interface SessionState {
   order: SessionId[];
   pinned: SessionId[];
   items: Record<SessionId, SessionMeta>;
-  layouts: Record<SessionId, { tabs: TabState[] } >;
+  layouts: Record<SessionId, { tabs: TabState[]; lastUrlByProvider?: Record<string, string> } >;
 }
 
 function getDefaultSessionState(): SessionState {
@@ -193,7 +196,7 @@ function ensureDefaultSession(): void {
   const id: SessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const now = Date.now();
   const tabs = getCurrentTabsSnapshot();
-  const defaultTitle = `Session ${new Date(now).toISOString().slice(0, 16).replace('T', ' ')}`;
+  const defaultTitle = `Session ${new Date(now).toLocaleString('sv-SE').slice(0, 16)}`;
   const meta: SessionMeta = {
     id,
     title: defaultTitle,
@@ -245,7 +248,52 @@ function getCurrentTabsSnapshot(): TabState[] {
   });
 }
 
-function restoreLayout(tabs: TabState[]): void {
+// Persist current views to the active session (tabs + last URLs)
+function saveActiveLayoutSnapshot(reason?: string): void {
+  try {
+    const state = getSessionState();
+    if (!state.activeId) return;
+    const tabs = getCurrentTabsSnapshot();
+    const layout = state.layouts[state.activeId] ?? { tabs: [] };
+    const last: Record<string, string> = { ...(layout.lastUrlByProvider || {}) };
+    for (const t of tabs) {
+      if (t.provider) last[t.provider] = t.url;
+    }
+    state.layouts[state.activeId] = { tabs, lastUrlByProvider: last };
+    const meta = state.items[state.activeId];
+    if (meta) meta.updatedAt = Date.now();
+    setSessionState(state);
+    mainWindow?.webContents.send("sessions:changed", { reason, updatedIds: [state.activeId] });
+  } catch (err) {
+    console.warn("Failed to save active layout", reason, err);
+  }
+}
+
+// Attach listeners to keep last URL up-to-date for active session
+function wireViewUrlPersistence(view: WebContentsView & { id?: string }): void {
+  const update = () => {
+    try {
+      const state = getSessionState();
+      if (!state.activeId) return;
+      const url = view.webContents.getURL() || (view as any).id || "";
+      const provider = inferProviderFromUrl(url);
+      const layout = state.layouts[state.activeId] ?? { tabs: [] };
+      const last = { ...(layout.lastUrlByProvider || {}) } as Record<string, string>;
+      last[provider] = url;
+      state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
+      const meta = state.items[state.activeId];
+      if (meta) meta.updatedAt = Date.now();
+      setSessionState(state);
+    } catch {}
+  };
+  const wc = view.webContents;
+  wc.on("did-navigate", update);
+  wc.on("did-navigate-in-page", update);
+  wc.on("did-redirect-navigation", update as any);
+  wc.on("page-title-updated", update as any);
+}
+
+function restoreLayout(tabs: TabState[], _lastUrlByProvider?: Record<string, string>): void {
   // Close all existing views
   const toRemove = [...views];
   toRemove.forEach((v) => {
@@ -257,11 +305,16 @@ function restoreLayout(tabs: TabState[]): void {
 
   // Recreate views based on tabs
   tabs.forEach((tab) => {
-    const url = tab.url && tab.url.length > 0 ? tab.url : PROVIDER_BASE_URL[tab.provider] || tab.url;
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    const url = (tab.url && tab.url.length > 0)
+      ? tab.url
+      : (PROVIDER_BASE_URL[tab.provider] || tab.url);
+    const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    wireViewUrlPersistence(v);
   });
 
   void adjustBrowserViewBounds();
+  // After restore, persist snapshot so state stores last URLs too
+  saveActiveLayoutSnapshot("restoreLayout");
 }
 
 function createWindow(): void {
@@ -397,7 +450,6 @@ function createSessionsWindow() {
   sessionsWindow.on("closed", () => { sessionsWindow = null; });
   sessionsWindow.loadFile(path.join(__dirname, "..", "src", "sessions.html"));
   // position after load to ensure proper bounds
-  ensureDefaultSession();
   layoutWindows();
 }
 
@@ -517,6 +569,15 @@ ipcMain.handle("get-current-urls", () => {
   });
 });
 
+ipcMain.handle("get-current-prompt", async () => {
+  try {
+    const prompt = await mainWindow.webContents.executeJavaScript(`document.getElementById('prompt-input')?.value || ''`);
+    return prompt;
+  } catch {
+    return '';
+  }
+});
+
 ipcMain.on("copy-to-clipboard", (_, text: string) => {
   clipboard.writeText(text ?? "");
 });
@@ -565,16 +626,67 @@ ipcMain.handle(
   },
 );
 
-ipcMain.on("send-prompt", (_, prompt: string) => {
-  // Added type for prompt (though unused here)
-  views.forEach((view) => {
+ipcMain.on("send-prompt", async (_evt, prompt: string) => {
+  try {
+    let firstPrompt = typeof prompt === "string" ? prompt : "";
+    if (!firstPrompt) {
+      try {
+        firstPrompt = await mainWindow.webContents.executeJavaScript(
+          `document.getElementById('prompt-input')?.value || ''`
+        );
+      } catch {}
+    }
+
+    const state = getSessionState();
+    if (!state.activeId) {
+      const now = Date.now();
+      const id: SessionId = `${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const tabs = getCurrentTabsSnapshot();
+      const clean = (firstPrompt ?? "").trim().replace(/\s+/g, " ");
+      const title =
+        clean.length > 0
+          ? clean.slice(0, 80)
+          : `Session ${new Date(now).toLocaleString('sv-SE').slice(0, 16)}`;
+      const meta: SessionMeta = {
+        id,
+        title,
+        pinned: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      state.items[id] = meta;
+      state.layouts[id] = { tabs };
+      state.order = [
+        id,
+        ...state.order.filter((x) => x !== id && !state.pinned.includes(x)),
+      ];
+      state.activeId = id;
+      setSessionState(state);
+      mainWindow.webContents.send("sessions:changed", { updatedIds: [id] });
+      mainWindow.webContents.send("sessions:active-changed", { id });
+    }
+  } catch (err) {
+    console.error("Failed to auto-create session on first message", err);
+  }
+
+  views.forEach((view: CustomBrowserView) => {
     sendPromptInView(view);
   });
+
+  // Delay snapshotting the layout so navigations can settle
+  try {
+    if (postSendLayoutTimer) clearTimeout(postSendLayoutTimer);
+    postSendLayoutTimer = setTimeout(() => {
+      saveActiveLayoutSnapshot("post-send");
+    }, 2000);
+  } catch {}
 });
 
 // ----- Sessions IPC -----
 ipcMain.handle("sessions:list", () => {
-  ensureDefaultSession();
   const state = getSessionState();
   const items: SessionMeta[] = [];
   const pushIf = (id: string) => {
@@ -586,15 +698,37 @@ ipcMain.handle("sessions:list", () => {
   return { items };
 });
 
-ipcMain.handle("sessions:create", () => {
+// Start a fresh temporary context (unsaved)
+ipcMain.handle(
+  "context:new",
+  (_evt, payload: { layout?: "default" | "empty" }) => {
+    const mode = payload?.layout === "empty" ? "empty" : "default";
+    const tabs =
+      mode === "empty"
+        ? []
+        : (websites || []).map((url) => ({
+            provider: inferProviderFromUrl(url),
+            url,
+            zoom: 1,
+          }));
+    const state = getSessionState();
+    state.activeId = null;
+    setSessionState(state);
+    restoreLayout(tabs);
+    mainWindow.webContents.send("sessions:active-changed", { id: null });
+  },
+);
+
+ipcMain.handle("sessions:create", (_evt, { title }: { title?: string }) => {
   const state = getSessionState();
   const id: SessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const now = Date.now();
   const tabs = getCurrentTabsSnapshot();
-  const defaultTitle = `Session ${new Date(now).toISOString().slice(0, 16).replace('T', ' ')}`;
+  const promptTitle = title?.trim();
+  const defaultTitle = `Session ${new Date(now).toLocaleString('sv-SE').slice(0, 16)}`;
   const meta: SessionMeta = {
     id,
-    title: defaultTitle,
+    title: promptTitle || defaultTitle,
     pinned: false,
     createdAt: now,
     updatedAt: now,
@@ -634,7 +768,7 @@ ipcMain.handle("sessions:open", (_evt, { id }: { id: SessionId }) => {
   }
   state.activeId = id;
   setSessionState(state);
-  restoreLayout(layout.tabs);
+  restoreLayout(layout.tabs, layout.lastUrlByProvider);
   mainWindow.webContents.send("sessions:active-changed", { id });
 });
 
@@ -680,9 +814,14 @@ ipcMain.on("delete-prompt-by-value", (event, value: string) => {
 ipcMain.on("open-claude", (_, prompt: string) => {
   if (prompt === "open claude now") {
     console.log("Opening Claude");
-    let url = "https://claude.ai/chats/";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    const state = getSessionState();
+    const layout = state.activeId ? state.layouts[state.activeId] : null;
+    const tab = layout?.tabs.find(t => t.provider === "claude");
+    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://claude.ai/chats/";
+    const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
+    saveActiveLayoutSnapshot("open-claude");
   }
 });
 
@@ -691,8 +830,21 @@ ipcMain.on("close-claude", (_, prompt: string) => {
     console.log("Closing Claude");
     const claudeView = views.find((view) => view.id.match("claude"));
     if (claudeView) {
+      // Persist latest URL for provider before closing
+      try {
+        const url = claudeView.webContents.getURL() || claudeView.id;
+        const state = getSessionState();
+        if (state.activeId) {
+          const layout = state.layouts[state.activeId] ?? { tabs: [] };
+          const last = { ...(layout.lastUrlByProvider || {}) } as Record<string, string>;
+          last["claude"] = url;
+          state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
+          setSessionState(state);
+        }
+      } catch {}
       removeBrowserView(mainWindow, claudeView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
+      saveActiveLayoutSnapshot("close-claude");
     }
   }
 });
@@ -700,9 +852,14 @@ ipcMain.on("close-claude", (_, prompt: string) => {
 ipcMain.on("open-grok", (_, prompt: string) => {
   if (prompt === "open grok now") {
     console.log("Opening Grok");
-    let url = "https://grok.com/";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    const state = getSessionState();
+    const layout = state.activeId ? state.layouts[state.activeId] : null;
+    const tab = layout?.tabs.find(t => t.provider === "grok");
+    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://grok.com/";
+    const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
+    saveActiveLayoutSnapshot("open-grok");
   }
 });
 
@@ -711,8 +868,20 @@ ipcMain.on("close-grok", (_, prompt: string) => {
     console.log("Closing Grok");
     const grokView = views.find((view) => view.id.match("grok"));
     if (grokView) {
+      try {
+        const url = grokView.webContents.getURL() || grokView.id;
+        const state = getSessionState();
+        if (state.activeId) {
+          const layout = state.layouts[state.activeId] ?? { tabs: [] };
+          const last = { ...(layout.lastUrlByProvider || {}) } as Record<string, string>;
+          last["grok"] = url;
+          state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
+          setSessionState(state);
+        }
+      } catch {}
       removeBrowserView(mainWindow, grokView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
+      saveActiveLayoutSnapshot("close-grok");
     }
   }
 });
@@ -720,9 +889,14 @@ ipcMain.on("close-grok", (_, prompt: string) => {
 ipcMain.on("open-deepseek", (_, prompt: string) => {
   if (prompt === "open deepseek now") {
     console.log("Opening DeepSeek");
-    let url = "https://chat.deepseek.com/";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    const state = getSessionState();
+    const layout = state.activeId ? state.layouts[state.activeId] : null;
+    const tab = layout?.tabs.find(t => t.provider === "deepseek");
+    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://chat.deepseek.com/";
+    const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
+    saveActiveLayoutSnapshot("open-deepseek");
   }
 });
 
@@ -731,8 +905,20 @@ ipcMain.on("close-deepseek", (_, prompt: string) => {
     console.log("Closing Deepseek");
     const deepseekView = views.find((view) => view.id.match("deepseek"));
     if (deepseekView) {
+      try {
+        const url = deepseekView.webContents.getURL() || deepseekView.id;
+        const state = getSessionState();
+        if (state.activeId) {
+          const layout = state.layouts[state.activeId] ?? { tabs: [] };
+          const last = { ...(layout.lastUrlByProvider || {}) } as Record<string, string>;
+          last["deepseek"] = url;
+          state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
+          setSessionState(state);
+        }
+      } catch {}
       removeBrowserView(mainWindow, deepseekView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
+      saveActiveLayoutSnapshot("close-deepseek");
     }
   }
 });
@@ -740,9 +926,14 @@ ipcMain.on("close-deepseek", (_, prompt: string) => {
 ipcMain.on("open-chatgpt", (_, prompt: string) => {
   if (prompt === "open chatgpt now") {
     console.log("Opening ChatGPT");
-    let url = "https://chatgpt.com/";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    const state = getSessionState();
+    const layout = state.activeId ? state.layouts[state.activeId] : null;
+    const tab = layout?.tabs.find(t => t.provider === "chatgpt");
+    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://chatgpt.com/";
+    const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
+    saveActiveLayoutSnapshot("open-chatgpt");
   }
 });
 
@@ -751,8 +942,20 @@ ipcMain.on("close-chatgpt", (_, prompt: string) => {
     console.log("Closing ChatGPT");
     const chatgptView = views.find((view) => view.id.match("chatgpt"));
     if (chatgptView) {
+      try {
+        const url = chatgptView.webContents.getURL() || chatgptView.id;
+        const state = getSessionState();
+        if (state.activeId) {
+          const layout = state.layouts[state.activeId] ?? { tabs: [] };
+          const last = { ...(layout.lastUrlByProvider || {}) } as Record<string, string>;
+          last["chatgpt"] = url;
+          state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
+          setSessionState(state);
+        }
+      } catch {}
       removeBrowserView(mainWindow, chatgptView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
+      saveActiveLayoutSnapshot("close-chatgpt");
     }
   }
 });
@@ -760,9 +963,14 @@ ipcMain.on("close-chatgpt", (_, prompt: string) => {
 ipcMain.on("open-gemini", (_, prompt: string) => {
   if (prompt === "open gemini now") {
     console.log("Opening Gemini");
-    let url = "https://gemini.google.com/";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    const state = getSessionState();
+    const layout = state.activeId ? state.layouts[state.activeId] : null;
+    const tab = layout?.tabs.find(t => t.provider === "gemini");
+    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://gemini.google.com/";
+    const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
+    saveActiveLayoutSnapshot("open-gemini");
   }
 });
 
@@ -771,8 +979,20 @@ ipcMain.on("close-gemini", (_, prompt: string) => {
     console.log("Closing Gemini");
     const geminiView = views.find((view) => view.id.match("gemini"));
     if (geminiView) {
+      try {
+        const url = geminiView.webContents.getURL() || geminiView.id;
+        const state = getSessionState();
+        if (state.activeId) {
+          const layout = state.layouts[state.activeId] ?? { tabs: [] };
+          const last = { ...(layout.lastUrlByProvider || {}) } as Record<string, string>;
+          last["gemini"] = url;
+          state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
+          setSessionState(state);
+        }
+      } catch {}
       removeBrowserView(mainWindow, geminiView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
+      saveActiveLayoutSnapshot("close-gemini");
     }
   }
 });
@@ -780,9 +1000,14 @@ ipcMain.on("close-gemini", (_, prompt: string) => {
 ipcMain.on("open-perplexity", (_, prompt: string) => {
   if (prompt === "open perplexity now") {
     console.log("Opening Perplexity");
-    let url = "https://www.perplexity.ai/";
-    addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    const state = getSessionState();
+    const layout = state.activeId ? state.layouts[state.activeId] : null;
+    const tab = layout?.tabs.find(t => t.provider === "perplexity");
+    let url = (tab?.url && tab.url.length > 0) ? tab.url : "https://www.perplexity.ai/";
+    const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
+    wireViewUrlPersistence(v);
     void adjustBrowserViewBounds();
+    saveActiveLayoutSnapshot("open-perplexity");
   }
 });
 
@@ -791,8 +1016,20 @@ ipcMain.on("close-perplexity", (_, prompt: string) => {
     console.log("Closing Perplexity");
     const perplexityView = views.find((view) => view.id.match("perplexity"));
     if (perplexityView) {
+      try {
+        const url = perplexityView.webContents.getURL() || perplexityView.id;
+        const state = getSessionState();
+        if (state.activeId) {
+          const layout = state.layouts[state.activeId] ?? { tabs: [] };
+          const last = { ...(layout.lastUrlByProvider || {}) } as Record<string, string>;
+          last["perplexity"] = url;
+          state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
+          setSessionState(state);
+        }
+      } catch {}
       removeBrowserView(mainWindow, perplexityView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
+      saveActiveLayoutSnapshot("close-perplexity");
     }
   }
 });

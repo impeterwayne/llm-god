@@ -142,6 +142,12 @@ function renderSessions(listEl: HTMLElement, sessions: SessionMeta[]) {
         console.error("Failed to open session", err);
       }
     });
+    // Right-click context menu for Rename/Delete
+    item.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      showSessionContextMenu(ev.clientX, ev.clientY, s);
+    });
     listEl.appendChild(item);
   });
 }
@@ -160,9 +166,9 @@ async function refreshSessions() {
 export function initSessionSidebar() {
   const sidebar = document.getElementById("sessions-sidebar");
   const list = document.getElementById("sessions-list");
-  const saveBtn = document.getElementById("save-session");
+  const newBtn = document.getElementById("new-session");
   const toggleBtn = document.getElementById("toggle-sessions");
-  if (!sidebar || !list || !saveBtn || !toggleBtn) return;
+  if (!sidebar || !list || !newBtn || !toggleBtn) return;
 
   // Restore collapsed state
   try {
@@ -203,12 +209,13 @@ export function initSessionSidebar() {
     const nowCollapsed = sidebar.classList.contains("collapsed");
     toggleBtn.textContent = nowCollapsed ? "»" : "«";
   });
-  saveBtn.addEventListener("click", async () => {
+  newBtn.addEventListener("click", async () => {
     try {
-      await ipcRenderer.invoke("sessions:create");
+      // Start a new temporary session with base tabs
+      await ipcRenderer.invoke("context:new", { layout: "default" });
       await refreshSessions();
     } catch (err) {
-      console.error("Failed to create session", err);
+      console.error("Failed to start new context", err);
     }
   });
 
@@ -234,4 +241,112 @@ export function initSessionSidebar() {
       programmaticExpandSidebar(sidebar);
     }
   });
+}
+
+// --- Simple in-renderer context menu for session items ---
+let sessionMenuEl: HTMLDivElement | null = null;
+function ensureSessionMenu(): HTMLDivElement {
+  if (sessionMenuEl && document.body.contains(sessionMenuEl)) return sessionMenuEl;
+  const menu = document.createElement("div");
+  menu.style.position = "fixed";
+  menu.style.zIndex = "9999";
+  menu.style.minWidth = "160px";
+  menu.style.background = "var(--surface-high, #272727)";
+  menu.style.border = "1px solid var(--outline, #3d3d3d)";
+  menu.style.borderRadius = "8px";
+  menu.style.boxShadow = "0 12px 28px rgba(0,0,0,0.45)";
+  menu.style.padding = "4px";
+  menu.style.display = "none";
+
+  const mkItem = (label: string) => {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.style.display = "block";
+    btn.style.width = "100%";
+    btn.style.textAlign = "left";
+    btn.style.padding = "8px 10px";
+    btn.style.border = "none";
+    btn.style.background = "transparent";
+    btn.style.color = "var(--text-secondary, #c7c7c7)";
+    btn.style.borderRadius = "6px";
+    btn.style.cursor = "pointer";
+    btn.onmouseenter = () => { btn.style.background = "rgba(138,180,248,0.12)"; btn.style.color = "var(--text-primary, #fff)"; };
+    btn.onmouseleave = () => { btn.style.background = "transparent"; btn.style.color = "var(--text-secondary, #c7c7c7)"; };
+    return btn;
+  };
+
+  const renameBtn = mkItem("Rename");
+  renameBtn.dataset.action = "rename";
+  const deleteBtn = mkItem("Delete");
+  deleteBtn.dataset.action = "delete";
+
+  menu.appendChild(renameBtn);
+  menu.appendChild(deleteBtn);
+
+  document.body.appendChild(menu);
+
+  // Dismiss on global interactions
+  const dismiss = () => hideSessionMenu();
+  window.addEventListener("resize", dismiss);
+  window.addEventListener("scroll", dismiss, true);
+  window.addEventListener("blur", dismiss);
+  document.addEventListener("click", (e) => {
+    if (!menu.contains(e.target as Node)) hideSessionMenu();
+  });
+  document.addEventListener("contextmenu", (e) => {
+    if (!menu.contains(e.target as Node)) hideSessionMenu();
+  });
+
+  sessionMenuEl = menu;
+  return menu;
+}
+
+function hideSessionMenu() {
+  if (sessionMenuEl) sessionMenuEl.style.display = "none";
+}
+
+function showSessionContextMenu(x: number, y: number, session: SessionMeta) {
+  const menu = ensureSessionMenu();
+  // Wire actions per-open so we capture the session id/title
+  const [renameBtn, deleteBtn] = Array.from(menu.querySelectorAll("button"));
+  if (renameBtn) {
+    (renameBtn as HTMLButtonElement).onclick = async () => {
+      hideSessionMenu();
+      const current = session.title || "Untitled";
+      const next = prompt("Rename session to:", current);
+      const title = (next ?? "").trim();
+      if (!title || title === current) return;
+      try {
+        await ipcRenderer.invoke("sessions:rename", { id: session.id, title });
+        await refreshSessions();
+      } catch (err) {
+        console.error("Rename failed", err);
+      }
+    };
+  }
+  if (deleteBtn) {
+    (deleteBtn as HTMLButtonElement).onclick = async () => {
+      hideSessionMenu();
+      const ok = confirm(`Delete session "${session.title || "Untitled"}"?`);
+      if (!ok) return;
+      try {
+        await ipcRenderer.invoke("sessions:delete", { id: session.id });
+        await refreshSessions();
+      } catch (err) {
+        console.error("Delete failed", err);
+      }
+    };
+  }
+
+  // Position within viewport
+  const vw = window.innerWidth, vh = window.innerHeight;
+  menu.style.display = "block";
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  const rect = menu.getBoundingClientRect();
+  let mx = x, my = y;
+  if (mx + rect.width > vw) mx = Math.max(0, vw - rect.width - 4);
+  if (my + rect.height > vh) my = Math.max(0, vh - rect.height - 4);
+  menu.style.left = `${mx}px`;
+  menu.style.top = `${my}px`;
 }

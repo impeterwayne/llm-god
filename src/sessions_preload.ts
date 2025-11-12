@@ -11,7 +11,6 @@ contextBridge.exposeInMainWorld("electron", {
     invoke: (channel: string, data?: any) => {
       const valid = [
         "sessions:list",
-        "sessions:create",
         "sessions:open",
         "sessions:rename",
         "sessions:delete",
