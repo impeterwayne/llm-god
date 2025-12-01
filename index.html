@@ -322,6 +322,10 @@
         box-sizing: border-box;
       }
 
+      .collapsed-only {
+        display: none;
+      }
+
       .sessions-list {
         flex: 1;
         overflow-y: auto;
@@ -355,12 +359,25 @@
         border-bottom: none;
         padding: var(--sessions-header-pad);
         padding-inline-end: 0; /* no end margin after collapse */
-        justify-content: flex-end; /* push toggle to rail edge */
-        gap: 0; /* remove inter-button gap in rail */
+        justify-content: center;
+        align-items: center;
+        gap: 0;
       }
-      body.sidebar-collapsed #sessions-sidebar .sessions-actions { gap: 0; }
+      body.sidebar-collapsed #sessions-sidebar .sessions-actions {
+        gap: 6px;
+        flex-direction: column;
+        align-items: center;
+      }
       /* Tighter start margin and small end spacing for the rail icon */
       body.sidebar-collapsed #sessions-sidebar #toggle-sessions {
+        margin-block: 0;
+        margin-inline-start: 2px;
+        margin-inline-end: 6px;
+        width: var(--sessions-button-size);
+        height: var(--sessions-button-size);
+      }
+      body.sidebar-collapsed #sessions-sidebar #collapsed-new-session {
+        display: inline-flex;
         margin-block: 0;
         margin-inline-start: 2px;
         margin-inline-end: 6px;
@@ -393,7 +410,15 @@
         <div class="sessions-title">Recent sessions</div>
         <div class="sessions-actions">
           <button class="sessions-btn" id="new-session">+ New</button>
-          <button class="sessions-icon-btn" id="toggle-sessions" title="Toggle sidebar">«</button>
+          <button class="sessions-icon-btn" id="toggle-sessions" title="Toggle sidebar">></button>
+          <button
+            class="sessions-icon-btn collapsed-only"
+            id="collapsed-new-session"
+            title="New session"
+            aria-label="New session"
+          >
+            +
+          </button>
         </div>
       </div>
       <div class="sessions-list" id="sessions-list" role="listbox" tabindex="0"></div>
@@ -495,3 +520,4 @@
   </script>
   <script type="module" src="./dist/dropdown.js"></script>
 </html>
+

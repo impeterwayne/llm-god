@@ -173,8 +173,19 @@ export function initSessionSidebar() {
   const sidebar = document.getElementById("sessions-sidebar");
   const list = document.getElementById("sessions-list");
   const newBtn = document.getElementById("new-session");
+  const collapsedNewBtn = document.getElementById("collapsed-new-session");
   const toggleBtn = document.getElementById("toggle-sessions");
   if (!sidebar || !list || !newBtn || !toggleBtn) return;
+
+  const createNewSession = async () => {
+    try {
+      // Start a new temporary session with base tabs
+      await ipcRenderer.invoke("context:new", { layout: "default" });
+      await refreshSessions();
+    } catch (err) {
+      console.error("Failed to start new context", err);
+    }
+  };
 
   // Restore collapsed state
   try {
@@ -183,11 +194,11 @@ export function initSessionSidebar() {
     if (collapsed) {
       sidebar.classList.add("collapsed");
       document.body.classList.add("sidebar-collapsed");
-      toggleBtn.textContent = "»"; // point right to expand
+      toggleBtn.textContent = ">"; // point right to expand
     } else {
       sidebar.classList.remove("collapsed");
       document.body.classList.remove("sidebar-collapsed");
-      toggleBtn.textContent = "«"; // point left to collapse
+      toggleBtn.textContent = "<"; // point left to collapse
     }
   } catch {}
 
@@ -213,17 +224,10 @@ export function initSessionSidebar() {
     const wasCollapsed = sidebar.classList.contains("collapsed");
     toggleSidebar(sidebar);
     const nowCollapsed = sidebar.classList.contains("collapsed");
-    toggleBtn.textContent = nowCollapsed ? "»" : "«";
+    toggleBtn.textContent = nowCollapsed ? ">" : "<";
   });
-  newBtn.addEventListener("click", async () => {
-    try {
-      // Start a new temporary session with base tabs
-      await ipcRenderer.invoke("context:new", { layout: "default" });
-      await refreshSessions();
-    } catch (err) {
-      console.error("Failed to start new context", err);
-    }
-  });
+  newBtn.addEventListener("click", createNewSession);
+  collapsedNewBtn?.addEventListener("click", createNewSession);
 
   window.addEventListener("resize", () => syncSidebarSize(sidebar));
 
@@ -366,3 +370,4 @@ function showSessionContextMenu(x: number, y: number, session: SessionMeta) {
   menu.style.left = `${mx}px`;
   menu.style.top = `${my}px`;
 }
+
