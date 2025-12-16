@@ -8,7 +8,10 @@ import {
   nativeTheme,
   clipboard,
   screen,
+  globalShortcut,
 } from "electron";
+import { exec } from "child_process";
+import util from "util";
 import * as remote from "@electron/remote/main/index.js";
 import path from "path";
 import electronLocalShortcut from "electron-localshortcut";
@@ -511,6 +514,45 @@ app.whenReady().then(() => {
     app.quit();
   });
 
+  globalShortcut.register("CommandOrControl+Q", async () => {
+    console.log("Global Control+Q pressed");
+
+    // workaround for windows to copy text from other apps
+    const execPromise = util.promisify(exec);
+    try {
+      if (process.platform === "win32") {
+        await execPromise(
+          `powershell.exe -c "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^c')"`
+        );
+      } else {
+        // macOS/Linux usually support cmd+c / ctrl+c standard via robotjs or similar, 
+        // but for now we only strictly support the requested Windows flow or fallback to current clipboard
+      }
+    } catch (e) {
+      console.error("Failed to simulate copy", e);
+    }
+
+    // Wait a bit for clipboard to update
+    setTimeout(() => {
+      const text = clipboard.readText();
+      createNewSession(text, true); // Use default layout (fresh tabs)
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+        // Send the text to the prompt area
+        mainWindow.webContents.send("inject-prompt", text);
+
+        // Inject into all views after a short delay to allow loading
+        // 2.5s delay usually enough for base DOM to be ready for injection
+        setTimeout(() => {
+          views.forEach((view) => {
+            injectPromptIntoView(view, text);
+          });
+        }, 2500);
+      }
+    }, 150);
+  });
 });
 
 app.on("window-all-closed", () => {
@@ -739,34 +781,7 @@ ipcMain.on("send-prompt", async (_evt, prompt: string) => {
 
     const state = getSessionState();
     if (!state.activeId) {
-      const now = Date.now();
-      const id: SessionId = `${Date.now()}-${Math.random()
-        .toString(36)
-        .slice(2, 8)}`;
-      const tabs = getCurrentTabsSnapshot();
-      const clean = (firstPrompt ?? "").trim().replace(/\s+/g, " ");
-      const title =
-        clean.length > 0
-          ? clean.slice(0, 80)
-          : `Session ${new Date(now).toLocaleString('sv-SE').slice(0, 16)}`;
-      const meta: SessionMeta = {
-        id,
-        title,
-        pinned: false,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      state.items[id] = meta;
-      state.layouts[id] = { tabs };
-      state.order = [
-        id,
-        ...state.order.filter((x) => x !== id && !state.pinned.includes(x)),
-      ];
-      state.activeId = id;
-      setSessionState(state);
-      mainWindow.webContents.send("sessions:changed", { updatedIds: [id] });
-      mainWindow.webContents.send("sessions:active-changed", { id });
+      createNewSession(firstPrompt);
     }
   } catch (err) {
     console.error("Failed to auto-create session on first message", err);
@@ -797,6 +812,63 @@ ipcMain.handle("sessions:list", () => {
   state.order.forEach(pushIf);
   return { items, activeId: state.activeId ?? null };
 });
+
+function createNewSession(initialTitlePrompt?: string, useDefaultLayout = false): SessionId {
+  const state = getSessionState();
+  const now = Date.now();
+  const id: SessionId = `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+
+  let tabs: TabState[];
+  if (useDefaultLayout) {
+    // Reset to base URLs but keep current providers (Add Button behavior)
+    tabs = getCurrentTabsSnapshot().map((t) => ({
+      provider: t.provider,
+      url: "", // Force usage of PROVIDER_BASE_URL in restoreLayout
+      zoom: t.zoom,
+    }));
+  } else {
+    tabs = getCurrentTabsSnapshot();
+  }
+
+  const clean = (initialTitlePrompt ?? "").trim().replace(/\s+/g, " ");
+  const title =
+    clean.length > 0
+      ? clean.slice(0, 80)
+      : `Session ${new Date(now).toLocaleString('sv-SE').slice(0, 16)}`;
+
+  const meta: SessionMeta = {
+    id,
+    title,
+    pinned: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  state.items[id] = meta;
+  state.layouts[id] = { tabs };
+  // Add new session to the top of the order
+  state.order = [
+    id,
+    ...state.order.filter((x) => x !== id && !state.pinned.includes(x)),
+  ];
+  state.activeId = id;
+  setSessionState(state);
+
+  // If we are creating a fresh session (not snapshot), we need to actually RESTORE that layout now
+  // because the current views define the "active" state.
+  // If we just set state.activeId but don't restoreLayout, the view remains on old tabs.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (useDefaultLayout) {
+      restoreLayout(tabs);
+    }
+    mainWindow.webContents.send("sessions:changed", { updatedIds: [id] });
+    mainWindow.webContents.send("sessions:active-changed", { id });
+  }
+
+  return id;
+}
 
 // Start a fresh temporary context (unsaved)
 ipcMain.handle(
