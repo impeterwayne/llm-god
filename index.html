@@ -1,523 +1,634 @@
 <!doctype html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline';"
-    />
-    <title>Multi-LLM Interface</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --surface: #1f1f1f;
-        --surface-high: #272727;
-        --surface-variant: #2f2f2f;
-        --outline: #3d3d3d;
-        --text-primary: #f5f5f5;
-        --text-secondary: #c7c7c7;
-        --accent: #8ab4f8;
-        --accent-hover: #6ea3f7;
-        --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
-        --radius-large: 20px;
-        --radius-medium: 14px;
-        --app-viewport-height: 1vh;
-        --sidebar-width: 280px;
-        --sidebar-max: 280px;
-        --sessions-button-size: 36px; /* unified size for header buttons */
-        --sessions-header-pad: 8px;    /* consistent padding around header items */
-        --sidebar-rail: calc(var(--sessions-button-size) + (2 * var(--sessions-header-pad)));
-      }
 
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <title>Multi-LLM Interface</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --surface: #1f1f1f;
+      --surface-high: #272727;
+      --surface-variant: #2f2f2f;
+      --outline: #3d3d3d;
+      --text-primary: #f5f5f5;
+      --text-secondary: #c7c7c7;
+      --accent: #8ab4f8;
+      --accent-hover: #6ea3f7;
+      --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+      --radius-large: 20px;
+      --radius-medium: 14px;
+      --app-viewport-height: 1vh;
+      --sidebar-width: 280px;
+      --sidebar-max: 280px;
+      --sessions-button-size: 36px;
+      /* unified size for header buttons */
+      --sessions-header-pad: 8px;
+      /* consistent padding around header items */
+      --sidebar-rail: calc(var(--sessions-button-size) + (2 * var(--sessions-header-pad)));
+    }
 
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+      height: 100vh;
+      min-height: 100vh;
+      padding: 0;
+      background: radial-gradient(circle at top, #2a2a2a, #141414 65%, #0f0f0f);
+      font-family: "Inter", "Segoe UI", sans-serif;
+      color: var(--text-primary);
+      transition: justify-content 0.3s ease;
+      overflow: hidden;
+      /* avoid page scroll; layout fits viewport */
+    }
+
+    body.is-overflowing {
+      justify-content: flex-start;
+    }
+
+    @supports (height: 100dvh) {
       body {
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-end;
-        align-items: center;
-        height: 100vh;
-        min-height: 100vh;
-        padding: 0;
-        background: radial-gradient(circle at top, #2a2a2a, #141414 65%, #0f0f0f);
-        font-family: "Inter", "Segoe UI", sans-serif;
-        color: var(--text-primary);
-        transition: justify-content 0.3s ease;
-        overflow: hidden; /* avoid page scroll; layout fits viewport */
+        min-height: 100dvh;
+        min-height: calc(var(--app-viewport-height) * 100);
       }
+    }
 
-      body.is-overflowing {
-        justify-content: flex-start;
-      }
+    .provider-toggle {
+      flex: 1;
+      min-height: 40px;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 8px;
+      border-radius: var(--radius-medium);
+      border: 1px solid var(--outline);
+      background: linear-gradient(180deg, var(--surface-high), var(--surface-variant));
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease,
+        border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+      opacity: 0.6;
+      /* default disabled state */
+    }
 
-      @supports (height: 100dvh) {
-        body {
-          min-height: 100dvh;
-          min-height: calc(var(--app-viewport-height) * 100);
-        }
-      }
+    .provider-toggle.active {
+      opacity: 1;
+      border-color: var(--accent);
+      color: var(--text-primary);
+      box-shadow: 0 4px 12px rgba(138, 180, 248, 0.25);
+    }
 
-      .provider-toggle {
-        flex: 1;
-        min-height: 40px;
-        font-size: 14px;
-        font-weight: 600;
-        padding: 8px;
-        border-radius: var(--radius-medium);
-        border: 1px solid var(--outline);
-        background: linear-gradient(180deg, var(--surface-high), var(--surface-variant));
-        color: var(--text-secondary);
-        cursor: pointer;
-        transition: transform 0.15s ease, box-shadow 0.15s ease,
-          border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
-        opacity: 0.6; /* default disabled state */
-      }
+    .provider-toggle:hover {
+      border-color: var(--accent);
+      color: var(--text-primary);
+      transform: translateY(-1px);
+    }
 
-      .provider-toggle.active {
-        opacity: 1;
-        border-color: var(--accent);
-        color: var(--text-primary);
-        box-shadow: 0 4px 12px rgba(138, 180, 248, 0.25);
-      }
+    #prompt-area {
+      position: fixed;
+      left: min(var(--sidebar-width, 280px), var(--sidebar-max, 280px));
+      right: 0;
+      bottom: 0;
+      display: flex;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 0;
+      min-height: 120px;
+      align-items: stretch;
+      width: auto;
+      background-color: var(--surface);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      box-shadow: var(--shadow);
+      flex-direction: column;
+      /* make room for header + input */
+    }
 
-      .provider-toggle:hover {
-        border-color: var(--accent);
-        color: var(--text-primary);
-        transform: translateY(-1px);
-      }
-
-      #prompt-area {
-        position: fixed;
-        left: min(var(--sidebar-width, 280px), var(--sidebar-max, 280px));
-        right: 0;
-        bottom: 0;
-        display: flex;
-        gap: 12px;
-        padding: 14px;
-        border-radius: 0;
-        min-height: 120px;
-        align-items: stretch;
-        width: auto;
-        background-color: var(--surface);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        box-shadow: var(--shadow);
-        flex-direction: column; /* make room for header + input */
-      }
-
-      #prompt-area.drag-active {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.35);
-        background: linear-gradient(
-          135deg,
+    #prompt-area.drag-active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.35);
+      background: linear-gradient(135deg,
           rgba(138, 180, 248, 0.12),
-          rgba(138, 180, 248, 0.05)
-        );
-      }
+          rgba(138, 180, 248, 0.05));
+    }
 
-      #prompt-input {
-        flex: 1;
-        padding: 14px;
-        font-size: 18px;
-        font-family: "Inter", "Segoe UI", sans-serif;
-        line-height: 1.6;
-        background: var(--surface-high);
-        border: 1px solid var(--outline);
-        border-radius: var(--radius-large);
-        color: var(--text-primary);
-        resize: none;
-        transition: border 0.2s ease, box-shadow 0.2s ease;
-      }
+    #prompt-input {
+      flex: 1;
+      padding: 14px;
+      font-size: 18px;
+      font-family: "Inter", "Segoe UI", sans-serif;
+      line-height: 1.6;
+      background: var(--surface-high);
+      border: 1px solid var(--outline);
+      border-radius: var(--radius-large);
+      color: var(--text-primary);
+      resize: none;
+      transition: border 0.2s ease, box-shadow 0.2s ease;
+    }
 
-      #prompt-input::placeholder {
-        color: var(--text-secondary);
-      }
+    #prompt-input::placeholder {
+      color: var(--text-secondary);
+    }
 
-      #prompt-input:focus {
-        outline: none;
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(138, 180, 248, 0.25);
-      }
+    #prompt-input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(138, 180, 248, 0.25);
+    }
 
-      .button-group {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        width: 208px;
-      }
+    .button-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: 208px;
+    }
 
-      .dropdown,
-      .prompt-picker {
-        width: 100%;
-        position: relative;
-      }
+    .dropdown,
+    .prompt-picker {
+      width: 100%;
+      position: relative;
+    }
 
-      button {
-        font-family: inherit;
-      }
+    button {
+      font-family: inherit;
+    }
 
-      #dropdown-button,
-      .utility-button {
-        width: 100%;
-        min-height: 46px;
-        font-size: 15px;
-        font-weight: 600;
-        padding: 10px 14px;
-        border-radius: var(--radius-medium);
-        border: 1px solid var(--outline);
-        background: linear-gradient(180deg, var(--surface-high), var(--surface-variant));
-        color: var(--text-secondary);
-        cursor: pointer;
-        transition: transform 0.15s ease, box-shadow 0.15s ease,
-          border-color 0.15s ease, color 0.15s ease;
-        text-align: center;
-      }
+    #dropdown-button,
+    .utility-button {
+      width: 100%;
+      min-height: 46px;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 10px 14px;
+      border-radius: var(--radius-medium);
+      border: 1px solid var(--outline);
+      background: linear-gradient(180deg, var(--surface-high), var(--surface-variant));
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease,
+        border-color 0.15s ease, color 0.15s ease;
+      text-align: center;
+    }
 
-      #dropdown-button:hover,
-      .utility-button:hover {
-        border-color: var(--accent);
-        color: var(--text-primary);
-        box-shadow: 0 6px 20px rgba(138, 180, 248, 0.25);
-        transform: translateY(-1px);
-      }
+    #dropdown-button:hover,
+    .utility-button:hover {
+      border-color: var(--accent);
+      color: var(--text-primary);
+      box-shadow: 0 6px 20px rgba(138, 180, 248, 0.25);
+      transform: translateY(-1px);
+    }
 
-      .utility-button {
-        background: linear-gradient(180deg, var(--accent), var(--accent-hover));
-        color: #0b182f;
-        border-color: transparent;
-      }
+    .utility-button {
+      background: linear-gradient(180deg, var(--accent), var(--accent-hover));
+      color: #0b182f;
+      border-color: transparent;
+    }
 
-      .utility-button:hover {
-        box-shadow: 0 10px 28px rgba(138, 180, 248, 0.35);
-      }
+    .utility-button:hover {
+      box-shadow: 0 10px 28px rgba(138, 180, 248, 0.35);
+    }
 
-      .dropdown-content {
-        display: none;
-        position: absolute;
-        top: calc(100% + 8px);
-        left: 0;
-        width: 100%;
-        background-color: var(--surface-high);
-        border-radius: var(--radius-medium);
-        border: 1px solid var(--outline);
-        padding: 8px;
-        max-height: 200px;
-        overflow-y: auto;
-        box-shadow: var(--shadow);
-        z-index: 1000;
-      }
+    .dropdown-content {
+      display: none;
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 0;
+      width: 100%;
+      background-color: var(--surface-high);
+      border-radius: var(--radius-medium);
+      border: 1px solid var(--outline);
+      padding: 8px;
+      max-height: 200px;
+      overflow-y: auto;
+      box-shadow: var(--shadow);
+      z-index: 1000;
+    }
 
-      .dropdown-item {
-        width: 100%;
-        padding: 10px 12px;
-        border-radius: 10px;
-        cursor: pointer;
-        font-weight: 500;
-        color: var(--text-secondary);
-        transition: background-color 0.15s ease, color 0.15s ease;
-      }
+    .dropdown-item {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: background-color 0.15s ease, color 0.15s ease;
+    }
 
-      .dropdown-item:hover {
-        background-color: rgba(138, 180, 248, 0.12);
-        color: var(--text-primary);
-      }
+    .dropdown-item:hover {
+      background-color: rgba(138, 180, 248, 0.12);
+      color: var(--text-primary);
+    }
 
-      .show {
-        display: block;
-      }
+    .show {
+      display: block;
+    }
 
-      /* Chat header inside prompt area */
-      .chat-header {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-        margin-bottom: 6px;
-      }
+    /* Chat header inside prompt area */
+    .chat-header {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
 
-      /* Chat input row */
-      .chat-input-row {
-        display: flex;
-        gap: 14px;
-        align-items: stretch;
-      }
+    /* Chat input row */
+    .chat-input-row {
+      display: flex;
+      gap: 14px;
+      align-items: stretch;
+    }
 
-      /* Sessions Sidebar */
-      #sessions-sidebar {
-        position: fixed;
-        top: 0;
-        left: 0;
-        bottom: 0; /* match full app window height */
-        width: min(var(--sidebar-width, 280px), var(--sidebar-max, 280px));
-        max-width: var(--sidebar-max, 280px);
-        background: var(--surface);
-        border-right: 1px solid var(--outline);
-        box-shadow: var(--shadow);
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-        z-index: 10;
-      }
+    /* Sessions Sidebar */
+    #sessions-sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      /* match full app window height */
+      width: min(var(--sidebar-width, 280px), var(--sidebar-max, 280px));
+      max-width: var(--sidebar-max, 280px);
+      background: var(--surface);
+      border-right: 1px solid var(--outline);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      z-index: 10;
+    }
 
-      /* collapse is managed via body.sidebar-collapsed rules */
-      #sessions-sidebar.no-transition { transition: none !important; }
-      body.sidebar-collapsed #prompt-area { left: var(--sidebar-rail, 40px); }
-      body.sidebar-collapsed #sessions-sidebar { width: var(--sidebar-rail, 40px) !important; }
-      body.sidebar-collapsed #sessions-sidebar .sessions-title,
-      body.sidebar-collapsed #sessions-sidebar #new-session,
-      body.sidebar-collapsed #sessions-sidebar .sessions-list,
-      body.sidebar-collapsed #sessions-sidebar .sessions-footer { display: none; }
-      body.sidebar-collapsed #sessions-sidebar .sessions-header { border-bottom: none; padding: 10px; }
-      body.sidebar-collapsed #sessions-sidebar #toggle-sessions { width: 100%; height: 28px; }
+    /* collapse is managed via body.sidebar-collapsed rules */
+    #sessions-sidebar.no-transition {
+      transition: none !important;
+    }
 
-      .sessions-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        padding: var(--sessions-header-pad);
-        border-bottom: 1px solid var(--outline);
-      }
+    body.sidebar-collapsed #prompt-area {
+      left: var(--sidebar-rail, 40px);
+    }
 
-      .sessions-title {
-        font-weight: 700;
-        font-size: 14px;
-        color: var(--text-secondary);
-      }
+    body.sidebar-collapsed #sessions-sidebar {
+      width: var(--sidebar-rail, 40px) !important;
+    }
 
-      .sessions-actions {
-        display: flex;
-        gap: 6px;
-      }
+    body.sidebar-collapsed #sessions-sidebar .sessions-title,
+    body.sidebar-collapsed #sessions-sidebar #new-session,
+    body.sidebar-collapsed #sessions-sidebar .sessions-list,
+    body.sidebar-collapsed #sessions-sidebar .sessions-footer {
+      display: none;
+    }
 
-      .sessions-btn {
-        border: 1px solid var(--outline);
-        background: var(--surface-high);
-        color: var(--text-secondary);
-        border-radius: 8px;
-        height: var(--sessions-button-size);
-        padding: 0 12px;
-        font-size: 12px;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        box-sizing: border-box;
-      }
+    body.sidebar-collapsed #sessions-sidebar .sessions-header {
+      border-bottom: none;
+      padding: 10px;
+    }
 
-      .sessions-icon-btn {
-        border: 1px solid var(--outline);
-        background: var(--surface-high);
-        color: var(--text-secondary);
-        border-radius: 8px;
-        width: var(--sessions-button-size);
-        height: var(--sessions-button-size);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 14px;
-        cursor: pointer;
-        box-sizing: border-box;
-      }
+    body.sidebar-collapsed #sessions-sidebar #toggle-sessions {
+      width: 100%;
+      height: 28px;
+    }
 
-      .collapsed-only {
-        display: none;
-      }
+    .sessions-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: var(--sessions-header-pad);
+      border-bottom: 1px solid var(--outline);
+    }
 
-      .sessions-list {
-        flex: 1;
-        overflow-y: auto;
-        padding: 8px;
-      }
+    .sessions-title {
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
 
-      .session-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 10px;
-        border-radius: 8px;
-        cursor: pointer;
-        color: var(--text-secondary);
-      }
+    .sessions-actions {
+      display: flex;
+      gap: 6px;
+    }
 
-      .session-item:hover { background: rgba(138,180,248,0.10); color: var(--text-primary); }
-      .session-item.active { background: rgba(138,180,248,0.18); color: var(--text-primary); }
+    .sessions-btn {
+      border: 1px solid var(--outline);
+      background: var(--surface-high);
+      color: var(--text-secondary);
+      border-radius: 8px;
+      height: var(--sessions-button-size);
+      padding: 0 12px;
+      font-size: 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
 
-      .sessions-footer { padding: 8px; border-top: 1px solid var(--outline); }
-      .sessions-footer .sessions-btn { width: 100%; }
+    .sessions-icon-btn {
+      border: 1px solid var(--outline);
+      background: var(--surface-high);
+      color: var(--text-secondary);
+      border-radius: 8px;
+      width: var(--sessions-button-size);
+      height: var(--sessions-button-size);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      cursor: pointer;
+      box-sizing: border-box;
+    }
 
-      /* Collapse adjustments */
-      body.sidebar-collapsed #prompt-area { left: var(--sidebar-rail, 40px); }
-      body.sidebar-collapsed #sessions-sidebar { width: var(--sidebar-rail, 40px) !important; }
-      body.sidebar-collapsed #sessions-sidebar .sessions-title,
-      body.sidebar-collapsed #sessions-sidebar #new-session,
-      body.sidebar-collapsed #sessions-sidebar .sessions-list,
-      body.sidebar-collapsed #sessions-sidebar .sessions-footer { display: none; }
-      body.sidebar-collapsed #sessions-sidebar .sessions-header {
-        border-bottom: none;
-        padding: var(--sessions-header-pad);
-        padding-inline-end: 0; /* no end margin after collapse */
-        justify-content: center;
-        align-items: center;
-        gap: 0;
-      }
-      body.sidebar-collapsed #sessions-sidebar .sessions-actions {
-        gap: 6px;
-        flex-direction: column;
-        align-items: center;
-      }
-      /* Tighter start margin and small end spacing for the rail icon */
-      body.sidebar-collapsed #sessions-sidebar #toggle-sessions {
-        margin-block: 0;
-        margin-inline-start: 2px;
-        margin-inline-end: 6px;
-        width: var(--sessions-button-size);
-        height: var(--sessions-button-size);
-      }
-      body.sidebar-collapsed #sessions-sidebar #collapsed-new-session {
-        display: inline-flex;
-        margin-block: 0;
-        margin-inline-start: 2px;
-        margin-inline-end: 6px;
-        width: var(--sessions-button-size);
-        height: var(--sessions-button-size);
-      }
-    </style>
-    <script>
-      // Ensure sidebar uses the CSS default width if a larger value was stored earlier
-      (function () {
-        try {
-          var CSS_DEFAULT = 280;
-          var key = 'sessionsSidebar.width';
-          var raw = localStorage.getItem(key);
-          var n = raw ? parseInt(raw, 10) : NaN;
-          if (!isFinite(n) || n > CSS_DEFAULT) {
-            localStorage.setItem(key, String(CSS_DEFAULT));
-          }
-        } catch (e) {
-          // noop
+    .collapsed-only {
+      display: none;
+    }
+
+    .sessions-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .session-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--text-secondary);
+    }
+
+    .session-item:hover {
+      background: rgba(138, 180, 248, 0.10);
+      color: var(--text-primary);
+    }
+
+    .session-item.active {
+      background: rgba(138, 180, 248, 0.18);
+      color: var(--text-primary);
+    }
+
+    .sessions-footer {
+      padding: 8px;
+      border-top: 1px solid var(--outline);
+    }
+
+    .sessions-footer .sessions-btn {
+      width: 100%;
+    }
+
+    /* Collapse adjustments */
+    body.sidebar-collapsed #prompt-area {
+      left: var(--sidebar-rail, 40px);
+    }
+
+    body.sidebar-collapsed #sessions-sidebar {
+      width: var(--sidebar-rail, 40px) !important;
+    }
+
+    body.sidebar-collapsed #sessions-sidebar .sessions-title,
+    body.sidebar-collapsed #sessions-sidebar #new-session,
+    body.sidebar-collapsed #sessions-sidebar .sessions-list,
+    body.sidebar-collapsed #sessions-sidebar .sessions-footer {
+      display: none;
+    }
+
+    body.sidebar-collapsed #sessions-sidebar .sessions-header {
+      border-bottom: none;
+      padding: var(--sessions-header-pad);
+      padding-inline-end: 0;
+      /* no end margin after collapse */
+      justify-content: center;
+      align-items: center;
+      gap: 0;
+    }
+
+    body.sidebar-collapsed #sessions-sidebar .sessions-actions {
+      gap: 6px;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* Tighter start margin and small end spacing for the rail icon */
+    body.sidebar-collapsed #sessions-sidebar #toggle-sessions {
+      margin-block: 0;
+      margin-inline-start: 2px;
+      margin-inline-end: 6px;
+      width: var(--sessions-button-size);
+      height: var(--sessions-button-size);
+    }
+
+    body.sidebar-collapsed #sessions-sidebar #collapsed-new-session {
+      display: inline-flex;
+      margin-block: 0;
+      margin-inline-start: 2px;
+      margin-inline-end: 6px;
+      width: var(--sessions-button-size);
+      height: var(--sessions-button-size);
+
+    }
+
+    /* View Headers */
+    #view-headers-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 44px;
+      /* Matches HEADER_HEIGHT in main.ts */
+      pointer-events: none;
+      /* Let clicks pass through empty areas */
+      z-index: 100;
+    }
+
+    .view-header {
+      position: absolute;
+      top: 0;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 8px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--outline);
+      border-right: 1px solid var(--outline);
+      pointer-events: auto;
+      box-sizing: border-box;
+    }
+
+    .view-header input {
+      flex: 1;
+      height: 28px;
+      background: var(--surface-high);
+      border: 1px solid var(--outline);
+      border-radius: var(--radius-medium);
+      color: var(--text-primary);
+      padding: 0 10px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .view-header input:focus {
+      border-color: var(--accent);
+    }
+
+    .view-header button {
+      height: 28px;
+      padding: 0 10px;
+      background: var(--surface-high);
+      border: 1px solid var(--outline);
+      border-radius: var(--radius-medium);
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .view-header button:hover {
+      background: var(--surface-variant);
+      color: var(--text-primary);
+      border-color: var(--accent);
+    }
+  </style>
+  <script>
+    // Ensure sidebar uses the CSS default width if a larger value was stored earlier
+    (function () {
+      try {
+        var CSS_DEFAULT = 280;
+        var key = 'sessionsSidebar.width';
+        var raw = localStorage.getItem(key);
+        var n = raw ? parseInt(raw, 10) : NaN;
+        if (!isFinite(n) || n > CSS_DEFAULT) {
+          localStorage.setItem(key, String(CSS_DEFAULT));
         }
-      })();
-    </script>
-    <script type="module" src="./dist/renderer.js"></script>
-  </head>
+      } catch (e) {
+        // noop
+      }
+    })();
+  </script>
+  <script type="module" src="./dist/renderer.js"></script>
+</head>
 
-  <body class="sidebar-collapsed">
-    <aside id="sessions-sidebar">
-      <div class="sessions-header">
-        <div class="sessions-title">Recent sessions</div>
-        <div class="sessions-actions">
-          <button class="sessions-btn" id="new-session">+ New</button>
-          <button class="sessions-icon-btn" id="toggle-sessions" title="Toggle sidebar">></button>
-          <button
-            class="sessions-icon-btn collapsed-only"
-            id="collapsed-new-session"
-            title="New session"
-            aria-label="New session"
-          >
-            +
-          </button>
-        </div>
-      </div>
-      <div class="sessions-list" id="sessions-list" role="listbox" tabindex="0"></div>
-      <div class="sessions-footer"></div>
-    </aside>
-
-    <div id="prompt-area">
-      <div class="chat-header">
-        <button class="provider-toggle" data-provider="chatgpt">ChatGPT</button>
-        <button class="provider-toggle" data-provider="gemini">Gemini</button>
-        <button class="provider-toggle" data-provider="perplexity">Perplexity</button>
-        <button class="provider-toggle" data-provider="claude">Claude</button>
-        <button class="provider-toggle" data-provider="grok">Grok</button>
-        <button class="provider-toggle" data-provider="deepseek">DeepSeek</button>
-      </div>
-      <div class="chat-input-row">
-        <textarea id="prompt-input" rows="3" placeholder="Press Ctrl + Enter to send prompt"></textarea>
-        <div class="button-group">
-          <button class="utility-button" id="copy-agent-prompt">
-            Copy Agent Prompt
-          </button>
-        </div>
+<body class="sidebar-collapsed">
+  <aside id="sessions-sidebar">
+    <div class="sessions-header">
+      <div class="sessions-title">Recent sessions</div>
+      <div class="sessions-actions">
+        <button class="sessions-btn" id="new-session">+ New</button>
+        <button class="sessions-icon-btn" id="toggle-sessions" title="Toggle sidebar">></button>
+        <button class="sessions-icon-btn collapsed-only" id="collapsed-new-session" title="New session"
+          aria-label="New session">
+          +
+        </button>
       </div>
     </div>
-  </body>
-  <script>
-      (() => {
-        const root = document.documentElement;
-        const body = document.body;
-        const promptArea = document.getElementById("prompt-area");
+    <div class="sessions-list" id="sessions-list" role="listbox" tabindex="0"></div>
+    <div class="sessions-footer"></div>
+  </aside>
 
-        if (!promptArea) {
-          return;
-        }
+  <div id="view-headers-container"></div>
+  <div id="prompt-area">
+    <div class="chat-header">
+      <button class="provider-toggle" data-provider="chatgpt">ChatGPT</button>
+      <button class="provider-toggle" data-provider="gemini">Gemini</button>
+      <button class="provider-toggle" data-provider="perplexity">Perplexity</button>
+      <button class="provider-toggle" data-provider="claude">Claude</button>
+      <button class="provider-toggle" data-provider="grok">Grok</button>
+      <button class="provider-toggle" data-provider="deepseek">DeepSeek</button>
+    </div>
+    <div class="chat-input-row">
+      <textarea id="prompt-input" rows="3" placeholder="Press Ctrl + Enter to send prompt"></textarea>
+      <div class="button-group">
+        <button class="utility-button" id="copy-agent-prompt">
+          Copy Agent Prompt
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+<script>
+  (() => {
+    const root = document.documentElement;
+    const body = document.body;
+    const promptArea = document.getElementById("prompt-area");
 
-        const getViewportHeight = () =>
-          window.visualViewport?.height ?? document.documentElement.clientHeight;
+    if (!promptArea) {
+      return;
+    }
 
-        const updateOverflowState = () => {
-          const viewportHeight = getViewportHeight();
-          const styles = window.getComputedStyle(body);
-          const paddingTop = parseFloat(styles.paddingTop) || 0;
-          const paddingBottom = parseFloat(styles.paddingBottom) || 0;
-          const totalHeight =
-            promptArea.getBoundingClientRect().height + paddingTop + paddingBottom;
+    const getViewportHeight = () =>
+      window.visualViewport?.height ?? document.documentElement.clientHeight;
 
-          body.classList.toggle(
-            "is-overflowing",
-            totalHeight - viewportHeight > 1,
-          );
-        };
+    const updateOverflowState = () => {
+      const viewportHeight = getViewportHeight();
+      const styles = window.getComputedStyle(body);
+      const paddingTop = parseFloat(styles.paddingTop) || 0;
+      const paddingBottom = parseFloat(styles.paddingBottom) || 0;
+      const totalHeight =
+        promptArea.getBoundingClientRect().height + paddingTop + paddingBottom;
 
-        const setViewportHeight = () => {
-          const viewportHeight = getViewportHeight();
-          root.style.setProperty(
-            "--app-viewport-height",
-            `${Math.max(viewportHeight, 1) * 0.01}px`,
-          );
-          updateOverflowState();
-        };
+      body.classList.toggle(
+        "is-overflowing",
+        totalHeight - viewportHeight > 1,
+      );
+    };
 
-        setViewportHeight();
+    const setViewportHeight = () => {
+      const viewportHeight = getViewportHeight();
+      root.style.setProperty(
+        "--app-viewport-height",
+        `${Math.max(viewportHeight, 1) * 0.01}px`,
+      );
+      updateOverflowState();
+    };
 
-        const handleViewportChange = () => setViewportHeight();
+    setViewportHeight();
 
-        window.visualViewport?.addEventListener("resize", handleViewportChange);
-        window.visualViewport?.addEventListener("scroll", handleViewportChange);
-        window.addEventListener("resize", handleViewportChange, { passive: true });
-        window.addEventListener("orientationchange", handleViewportChange);
+    const handleViewportChange = () => setViewportHeight();
 
-        if ("ResizeObserver" in window) {
-          const resizeObserver = new ResizeObserver(updateOverflowState);
-          resizeObserver.observe(promptArea);
+    window.visualViewport?.addEventListener("resize", handleViewportChange);
+    window.visualViewport?.addEventListener("scroll", handleViewportChange);
+    window.addEventListener("resize", handleViewportChange, { passive: true });
+    window.addEventListener("orientationchange", handleViewportChange);
 
-          window.addEventListener(
-            "pagehide",
-            () => {
-              window.visualViewport?.removeEventListener("resize", handleViewportChange);
-              window.visualViewport?.removeEventListener("scroll", handleViewportChange);
-              window.removeEventListener("resize", handleViewportChange);
-              window.removeEventListener("orientationchange", handleViewportChange);
-              resizeObserver.disconnect();
-            },
-            { once: true },
-          );
-        } else {
-          window.addEventListener(
-            "pagehide",
-            () => {
-              window.visualViewport?.removeEventListener("resize", handleViewportChange);
-              window.visualViewport?.removeEventListener("scroll", handleViewportChange);
-              window.removeEventListener("resize", handleViewportChange);
-              window.removeEventListener("orientationchange", handleViewportChange);
-            },
-            { once: true },
-          );
-        }
-      })();
-  </script>
-  <script type="module" src="./dist/dropdown.js"></script>
+    if ("ResizeObserver" in window) {
+      const resizeObserver = new ResizeObserver(updateOverflowState);
+      resizeObserver.observe(promptArea);
+
+      window.addEventListener(
+        "pagehide",
+        () => {
+          window.visualViewport?.removeEventListener("resize", handleViewportChange);
+          window.visualViewport?.removeEventListener("scroll", handleViewportChange);
+          window.removeEventListener("resize", handleViewportChange);
+          window.removeEventListener("orientationchange", handleViewportChange);
+          resizeObserver.disconnect();
+        },
+        { once: true },
+      );
+    } else {
+      window.addEventListener(
+        "pagehide",
+        () => {
+          window.visualViewport?.removeEventListener("resize", handleViewportChange);
+          window.visualViewport?.removeEventListener("scroll", handleViewportChange);
+          window.removeEventListener("resize", handleViewportChange);
+          window.removeEventListener("orientationchange", handleViewportChange);
+        },
+        { once: true },
+      );
+    }
+  })();
+</script>
+<script type="module" src="./dist/dropdown.js"></script>
+
 </html>
-

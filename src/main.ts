@@ -58,8 +58,10 @@ function scheduleSaveActiveLayoutSnapshot(reason?: string, delayMs = 800): void 
     sessionLayoutTimer = setTimeout(() => {
       saveActiveLayoutSnapshot(reason);
     }, Math.max(0, delayMs));
-  } catch {}
+  } catch { }
 }
+
+const HEADER_HEIGHT = 44; // Height for URL bar headers
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,13 +86,38 @@ async function adjustBrowserViewBounds(): Promise<void> {
   const viewWidth = websites.length > 0 ? Math.floor(availableWidth / websites.length) : availableWidth;
 
   views.forEach((view, index) => {
+    const x = offset + index * viewWidth;
+    const y = HEADER_HEIGHT;
+    const h = Math.max(availableHeight - HEADER_HEIGHT, 0);
+
     view.setBounds({
-      x: offset + index * viewWidth,
-      y: 0,
+      x: x,
+      y: y,
       width: viewWidth,
-      height: availableHeight,
+      height: h,
     });
   });
+
+  sendViewLayout();
+}
+
+function sendViewLayout() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const layout = views.map(v => {
+    const b = v.getBounds();
+    return {
+      id: v.id,
+      url: v.webContents.getURL(),
+      bounds: b,
+      headerBounds: {
+        x: b.x,
+        y: 0,
+        width: b.width,
+        height: HEADER_HEIGHT
+      }
+    };
+  });
+  mainWindow.webContents.send('view-layout-updated', layout);
 }
 
 async function initializeBrowserViews(): Promise<void> {
@@ -119,9 +146,9 @@ async function initializeBrowserViews(): Promise<void> {
     mainWindow.contentView.addChildView(view);
     view.setBounds({
       x: offset + index * viewWidth,
-      y: 0,
+      y: HEADER_HEIGHT,
       width: viewWidth,
-      height: availableHeight,
+      height: Math.max(availableHeight - HEADER_HEIGHT, 0),
     });
     view.webContents.setZoomFactor(1);
     applyCustomStyles(view.webContents);
@@ -169,7 +196,7 @@ interface SessionState {
   order: SessionId[];
   pinned: SessionId[];
   items: Record<SessionId, SessionMeta>;
-  layouts: Record<SessionId, { tabs: TabState[]; lastUrlByProvider?: Record<string, string> } >;
+  layouts: Record<SessionId, { tabs: TabState[]; lastUrlByProvider?: Record<string, string> }>;
 }
 
 function getDefaultSessionState(): SessionState {
@@ -298,6 +325,8 @@ function saveActiveLayoutSnapshot(reason?: string): void {
 function wireViewUrlPersistence(view: WebContentsView & { id?: string }): void {
   const update = () => {
     try {
+      sendViewLayout(); // Notify renderer of URL change
+
       const state = getSessionState();
       if (!state.activeId) return;
       const url = view.webContents.getURL() || (view as any).id || "";
@@ -309,7 +338,7 @@ function wireViewUrlPersistence(view: WebContentsView & { id?: string }): void {
       const meta = state.items[state.activeId];
       if (meta) meta.updatedAt = Date.now();
       setSessionState(state);
-    } catch {}
+    } catch { }
   };
   const wc = view.webContents;
   wc.on("did-navigate", update);
@@ -334,8 +363,8 @@ function restoreLayout(tabs: TabState[], lastUrlByProvider?: Record<string, stri
     const url = (last && last.length > 0)
       ? last
       : ((tab.url && tab.url.length > 0)
-          ? tab.url
-          : (PROVIDER_BASE_URL[tab.provider] || tab.url));
+        ? tab.url
+        : (PROVIDER_BASE_URL[tab.provider] || tab.url));
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
   });
@@ -686,6 +715,17 @@ ipcMain.handle(
   },
 );
 
+ipcMain.on('view-navigate', (_evt, { id, url }: { id: string; url: string }) => {
+  const view = views.find(v => v.id === id);
+  if (view) {
+    let target = url;
+    if (!/^https?:\/\//i.test(target)) {
+      target = 'https://' + target;
+    }
+    view.webContents.loadURL(target);
+  }
+});
+
 ipcMain.on("send-prompt", async (_evt, prompt: string) => {
   try {
     let firstPrompt = typeof prompt === "string" ? prompt : "";
@@ -694,7 +734,7 @@ ipcMain.on("send-prompt", async (_evt, prompt: string) => {
         firstPrompt = await mainWindow.webContents.executeJavaScript(
           `document.getElementById('prompt-input')?.value || ''`
         );
-      } catch {}
+      } catch { }
     }
 
     const state = getSessionState();
@@ -742,7 +782,7 @@ ipcMain.on("send-prompt", async (_evt, prompt: string) => {
     postSendLayoutTimer = setTimeout(() => {
       saveActiveLayoutSnapshot("post-send");
     }, 2000);
-  } catch {}
+  } catch { }
 });
 
 // ----- Sessions IPC -----
@@ -768,11 +808,11 @@ ipcMain.handle(
       mode === "empty"
         ? []
         : getCurrentTabsSnapshot().map((t) => ({
-            provider: t.provider,
-            // Force base URL selection during restore by providing empty url
-            url: "",
-            zoom: 1,
-          }));
+          provider: t.provider,
+          // Force base URL selection during restore by providing empty url
+          url: "",
+          zoom: 1,
+        }));
     const state = getSessionState();
     state.activeId = null;
     setSessionState(state);
@@ -906,7 +946,7 @@ ipcMain.on("close-claude", (_, prompt: string) => {
           state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
           setSessionState(state);
         }
-      } catch {}
+      } catch { }
       removeBrowserView(mainWindow, claudeView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
       scheduleSaveActiveLayoutSnapshot("close-claude", 800);
@@ -946,7 +986,7 @@ ipcMain.on("close-grok", (_, prompt: string) => {
           state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
           setSessionState(state);
         }
-      } catch {}
+      } catch { }
       removeBrowserView(mainWindow, grokView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
       scheduleSaveActiveLayoutSnapshot("close-grok", 800);
@@ -986,7 +1026,7 @@ ipcMain.on("close-deepseek", (_, prompt: string) => {
           state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
           setSessionState(state);
         }
-      } catch {}
+      } catch { }
       removeBrowserView(mainWindow, deepseekView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
       scheduleSaveActiveLayoutSnapshot("close-deepseek", 800);
@@ -1026,7 +1066,7 @@ ipcMain.on("close-chatgpt", (_, prompt: string) => {
           state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
           setSessionState(state);
         }
-      } catch {}
+      } catch { }
       removeBrowserView(mainWindow, chatgptView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
       scheduleSaveActiveLayoutSnapshot("close-chatgpt", 800);
@@ -1066,7 +1106,7 @@ ipcMain.on("close-gemini", (_, prompt: string) => {
           state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
           setSessionState(state);
         }
-      } catch {}
+      } catch { }
       removeBrowserView(mainWindow, geminiView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
       scheduleSaveActiveLayoutSnapshot("close-gemini", 800);
@@ -1106,7 +1146,7 @@ ipcMain.on("close-perplexity", (_, prompt: string) => {
           state.layouts[state.activeId] = { tabs: layout.tabs ?? [], lastUrlByProvider: last };
           setSessionState(state);
         }
-      } catch {}
+      } catch { }
       removeBrowserView(mainWindow, perplexityView, websites, views, { promptAreaHeight, sidebarWidth });
       void adjustBrowserViewBounds();
       scheduleSaveActiveLayoutSnapshot("close-perplexity", 800);
@@ -1191,13 +1231,6 @@ ipcMain.handle("get-key-by-value", (_, value: string) => {
   } else {
     console.error(`No matching key found for value: "${value}"`);
     return null;
-  }
-});
-
-ipcMain.on("close-edit-window", (event) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  if (win) {
-    win.close();
   }
 });
 

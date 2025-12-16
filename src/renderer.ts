@@ -11,6 +11,16 @@ interface SerializedFile {
   data: string;
 }
 
+interface ViewLayout {
+  id: string;
+  url: string;
+  bounds: Electron.Rectangle;
+  headerBounds: Electron.Rectangle;
+}
+
+let currentViewLayouts: ViewLayout[] = [];
+let viewHeadersContainer: HTMLElement | null = null;
+
 const removeDragActiveState = (): void => {
   promptArea?.classList.remove("drag-active");
 };
@@ -87,7 +97,7 @@ const notifyPromptAreaSize = (): void => {
       "--prompt-area-height",
       `${Math.max(0, Math.round(rect.height))}px`,
     );
-  } catch {}
+  } catch { }
   ipcRenderer.send("prompt-area-size", rect.height);
   // New unified measurement so main can also reserve right dock in future
   ipcRenderer.send("ui-chrome-size", { bottom: Math.max(0, Math.round(rect.height)), right: 0 });
@@ -373,3 +383,67 @@ if (document.readyState === "loading") {
 } else {
   try { initSessionSidebar(); } catch (err) { console.error(err); }
 }
+
+// ----- View Headers Implementation -----
+
+function updateViewHeaders(layouts: ViewLayout[]) {
+  if (!viewHeadersContainer) {
+    viewHeadersContainer = document.getElementById('view-headers-container');
+    if (!viewHeadersContainer) return;
+  }
+
+  currentViewLayouts = layouts;
+
+  // Clear existing (simple approach; optimization possible if thrashing)
+  viewHeadersContainer.innerHTML = '';
+
+  layouts.forEach(layout => {
+    const header = document.createElement('div');
+    header.className = 'view-header';
+    header.style.left = `${layout.headerBounds.x}px`;
+    header.style.top = `${layout.headerBounds.y}px`;
+    header.style.width = `${layout.headerBounds.width}px`;
+    header.style.height = `${layout.headerBounds.height}px`;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = layout.url || '';
+    input.placeholder = 'Enter URL...';
+
+    // Prevent keydown from bubbling to global handlers (like Ctrl+Enter sender)
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        const url = input.value.trim();
+        if (url) {
+          ipcRenderer.send('view-navigate', { id: layout.id, url });
+        }
+      }
+    });
+
+    const copyBtn = document.createElement('button');
+    copyBtn.textContent = 'Copy';
+    copyBtn.title = 'Copy URL to clipboard';
+    copyBtn.addEventListener('click', () => {
+      if (layout.url) {
+        ipcRenderer.send('copy-to-clipboard', layout.url);
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+      }
+    });
+
+    header.appendChild(input);
+    header.appendChild(copyBtn);
+    viewHeadersContainer?.appendChild(header);
+  });
+}
+
+// Listen for layout updates from main process
+ipcRenderer.on('view-layout-updated', (_event, layouts: ViewLayout[]) => {
+  updateViewHeaders(layouts);
+});
+
+// Ensure container reference on load
+window.addEventListener('DOMContentLoaded', () => {
+  viewHeadersContainer = document.getElementById('view-headers-container');
+});
