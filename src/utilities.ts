@@ -12,7 +12,7 @@ interface CustomBrowserView extends WebContentsView {
 const OPEN_DEVTOOLS_ON_STARTUP =
   DEVTOOLS_AUTO_OPEN ||
   (process.env.ELECTRON_OPEN_DEVTOOLS_ON_STARTUP ?? "").toLowerCase() ===
-    "true" ||
+  "true" ||
   (process.env.SHOW_DEVTOOLS ?? "").toLowerCase() === "true";
 
 export function ensureDetachedDevTools(view: CustomBrowserView): void {
@@ -906,16 +906,23 @@ export function sendPromptInView(view: CustomBrowserView) {
       {
         console.log('[Perplexity] Looking for submit button...');
         
-        // Try the reliable data-testid selector first
-        var button = document.querySelector('[data-testid="submit-button"]');
-        
-        // Fallback to the previous method if data-testid is not found
+        var button = document.querySelector('button[aria-label="Submit"]');
+
         if (!button) {
-          console.log('[Perplexity] data-testid not found, falling back to previous selector');
+           console.log('[Perplexity] aria-label="Submit" not found, trying data-testid');
+           button = document.querySelector('[data-testid="submit-button"]');
+        }
+        
+        // Fallback to class-based search
+        if (!button) {
+          console.log('[Perplexity] data-testid not found, falling back to class selector');
           var buttons = Array.from(document.querySelectorAll('button.bg-super'));
-          if (buttons[0]) {
-            var buttonsWithSvgPath = buttons.filter(button => button.querySelector('svg path'));
-            button = buttonsWithSvgPath[buttonsWithSvgPath.length - 1];
+          if (buttons.length > 0) {
+            // Usually the last one or one with an SVG
+             var buttonsWithSvg = buttons.filter(btn => btn.querySelector('svg'));
+             if (buttonsWithSvg.length > 0) {
+                button = buttonsWithSvg[buttonsWithSvg.length - 1];
+             }
           }
         }
         
@@ -941,7 +948,7 @@ export function sendPromptInView(view: CustomBrowserView) {
     }
   }`);
   } else if (view.id && view.id.match("grok")) {
-  view.webContents.executeJavaScript(`
+    view.webContents.executeJavaScript(`
     {
       // Try button click first
       var btn = document.querySelector('button[aria-label*="Submit"]')
@@ -975,8 +982,8 @@ export function sendPromptInView(view: CustomBrowserView) {
       }
     }
   `);
-} else if (view.id && view.id.match("deepseek")) {
-   view.webContents.executeJavaScript(`
+  } else if (view.id && view.id.match("deepseek")) {
+    view.webContents.executeJavaScript(`
      {
        var textarea = document.querySelector('textarea');
        if (textarea) {
