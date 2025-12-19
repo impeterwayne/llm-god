@@ -9,6 +9,8 @@ import {
   clipboard,
   screen,
   globalShortcut,
+  Menu,
+  nativeImage,
 } from "electron";
 import { exec } from "child_process";
 import util from "util";
@@ -123,6 +125,79 @@ function sendViewLayout() {
   mainWindow.webContents.send('view-layout-updated', layout);
 }
 
+// Setup context menu for browser views with copy image functionality
+function setupViewContextMenu(view: WebContentsView): void {
+  view.webContents.on('context-menu', async (event, params) => {
+    const menuItems: Electron.MenuItemConstructorOptions[] = [];
+
+    // Add "Copy image to clipboard" if right-clicked on an image
+    if (params.mediaType === 'image' && params.srcURL) {
+      menuItems.push({
+        label: 'Copy image to clipboard',
+        click: async () => {
+          try {
+            // Fetch the image and copy to clipboard
+            const response = await fetch(params.srcURL);
+            const buffer = await response.arrayBuffer();
+            const image = nativeImage.createFromBuffer(Buffer.from(buffer));
+            clipboard.writeImage(image);
+          } catch (err) {
+            console.error('Failed to copy image to clipboard:', err);
+          }
+        },
+      });
+      menuItems.push({
+        label: 'Copy image URL',
+        click: () => {
+          clipboard.writeText(params.srcURL);
+        },
+      });
+      menuItems.push({ type: 'separator' });
+    }
+
+    // Add standard text actions if text is selected
+    if (params.selectionText) {
+      menuItems.push({
+        label: 'Copy',
+        role: 'copy',
+      });
+      menuItems.push({ type: 'separator' });
+    }
+
+    // Add link actions if right-clicked on a link
+    if (params.linkURL) {
+      menuItems.push({
+        label: 'Copy link address',
+        click: () => {
+          clipboard.writeText(params.linkURL);
+        },
+      });
+      menuItems.push({ type: 'separator' });
+    }
+
+    // Standard navigation actions
+    menuItems.push({
+      label: 'Back',
+      enabled: view.webContents.canGoBack(),
+      click: () => view.webContents.goBack(),
+    });
+    menuItems.push({
+      label: 'Forward',
+      enabled: view.webContents.canGoForward(),
+      click: () => view.webContents.goForward(),
+    });
+    menuItems.push({
+      label: 'Reload',
+      click: () => view.webContents.reload(),
+    });
+
+    if (menuItems.length > 0) {
+      const menu = Menu.buildFromTemplate(menuItems);
+      menu.popup();
+    }
+  });
+}
+
 async function initializeBrowserViews(): Promise<void> {
   if (!mainWindow || browserViewsInitialized) {
     await adjustBrowserViewBounds();
@@ -160,6 +235,8 @@ async function initializeBrowserViews(): Promise<void> {
     ensureDetachedDevTools(view);
     // Keep last URL persistence updated for the active session
     wireViewUrlPersistence(view);
+    // Setup context menu for copy image functionality
+    setupViewContextMenu(view);
 
     views.push(view);
   });
@@ -370,6 +447,7 @@ function restoreLayout(tabs: TabState[], lastUrlByProvider?: Record<string, stri
         : (PROVIDER_BASE_URL[tab.provider] || tab.url));
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
+    setupViewContextMenu(v);
   });
 
   void adjustBrowserViewBounds();
@@ -997,6 +1075,7 @@ ipcMain.on("open-claude", (_, prompt: string) => {
       : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["claude"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
+    setupViewContextMenu(v);
     void adjustBrowserViewBounds();
     scheduleSaveActiveLayoutSnapshot("open-claude", 800);
   }
@@ -1038,6 +1117,7 @@ ipcMain.on("open-grok", (_, prompt: string) => {
       : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["grok"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
+    setupViewContextMenu(v);
     void adjustBrowserViewBounds();
     scheduleSaveActiveLayoutSnapshot("open-grok", 800);
   }
@@ -1078,6 +1158,7 @@ ipcMain.on("open-deepseek", (_, prompt: string) => {
       : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["deepseek"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
+    setupViewContextMenu(v);
     void adjustBrowserViewBounds();
     scheduleSaveActiveLayoutSnapshot("open-deepseek", 800);
   }
@@ -1118,6 +1199,7 @@ ipcMain.on("open-chatgpt", (_, prompt: string) => {
       : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["chatgpt"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
+    setupViewContextMenu(v);
     void adjustBrowserViewBounds();
     scheduleSaveActiveLayoutSnapshot("open-chatgpt", 800);
   }
@@ -1158,6 +1240,7 @@ ipcMain.on("open-gemini", (_, prompt: string) => {
       : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["gemini"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
+    setupViewContextMenu(v);
     void adjustBrowserViewBounds();
     scheduleSaveActiveLayoutSnapshot("open-gemini", 800);
   }
@@ -1198,6 +1281,7 @@ ipcMain.on("open-perplexity", (_, prompt: string) => {
       : ((tab?.url && tab.url.length > 0) ? tab.url : PROVIDER_BASE_URL["perplexity"]);
     const v = addBrowserView(mainWindow, url, websites, views, { promptAreaHeight, sidebarWidth });
     wireViewUrlPersistence(v);
+    setupViewContextMenu(v);
     void adjustBrowserViewBounds();
     scheduleSaveActiveLayoutSnapshot("open-perplexity", 800);
   }
