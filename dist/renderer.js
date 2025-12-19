@@ -1,5 +1,8 @@
 const ipcRenderer = window.electron.ipcRenderer;
+import { initSessionSidebar } from "./sessionSidebar.js";
 let promptArea = null;
+let currentViewLayouts = [];
+let viewHeadersContainer = null;
 const removeDragActiveState = () => {
     promptArea?.classList.remove("drag-active");
 };
@@ -53,7 +56,14 @@ const notifyPromptAreaSize = () => {
         return;
     }
     const rect = promptArea.getBoundingClientRect();
+    // Expose prompt area height as CSS variable for layout (e.g., sidebar bottom)
+    try {
+        document.documentElement.style.setProperty("--prompt-area-height", `${Math.max(0, Math.round(rect.height))}px`);
+    }
+    catch { }
     ipcRenderer.send("prompt-area-size", rect.height);
+    // New unified measurement so main can also reserve right dock in future
+    ipcRenderer.send("ui-chrome-size", { bottom: Math.max(0, Math.round(rect.height)), right: 0 });
 };
 const initializePromptAreaObserver = () => {
     promptArea = document.getElementById("prompt-area");
@@ -128,67 +138,76 @@ export function openGrokMessage(message) {
 export function closeGrokMessage(message) {
     ipcRenderer.send("close-grok", message);
 }
-export function openLMArena(message) {
-    ipcRenderer.send("open-lm-arena", message);
-}
-export function closeLMArena(message) {
-    ipcRenderer.send("close-lm-arena", message);
-}
 const textArea = document.getElementById("prompt-input");
-const openClaudeButton = document.getElementById("showClaude");
-const openGrokButton = document.getElementById("showGrok");
-const openDeepSeekButton = document.getElementById("showDeepSeek");
-const openLMArenaButton = document.getElementById("showLMArena");
-const promptDropdownButton = document.querySelector(".prompt-select");
-const copyAgentPromptButton = document.getElementById("copy-agent-prompt");
-if (openClaudeButton) {
-    openClaudeButton.addEventListener("click", (event) => {
-        if (openClaudeButton.textContent === "Show Claude") {
-            openClaudeMessage("open claude now");
-            openClaudeButton.textContent = "Hide Claude";
+// Provider toggle functionality
+const providerToggles = document.querySelectorAll('.provider-toggle');
+const updateProviderToggles = async () => {
+    try {
+        const urls = ((await ipcRenderer.invoke("get-current-urls")) ?? []);
+        const activeProviders = urls.map(url => inferProviderFromUrl(url));
+        providerToggles.forEach(toggle => {
+            const provider = toggle.dataset.provider;
+            if (provider && activeProviders.includes(provider)) {
+                toggle.classList.add('active');
+            }
+            else {
+                toggle.classList.remove('active');
+            }
+        });
+    }
+    catch (error) {
+        console.error("Failed to update provider toggles", error);
+    }
+};
+const inferProviderFromUrl = (url) => {
+    try {
+        const u = new URL(url);
+        const host = u.hostname;
+        if (/chatgpt\.com|chat\.openai\.com/i.test(host))
+            return "chatgpt";
+        if (/gemini\.google\.com/i.test(host))
+            return "gemini";
+        if (/perplexity\.ai/i.test(host))
+            return "perplexity";
+        if (/claude\.ai/i.test(host))
+            return "claude";
+        if (/grok\.com/i.test(host))
+            return "grok";
+        if (/deepseek\.com/i.test(host))
+            return "deepseek";
+        return host;
+    }
+    catch {
+        return url;
+    }
+};
+providerToggles.forEach(toggle => {
+    toggle.addEventListener('click', async () => {
+        const provider = toggle.dataset.provider;
+        if (!provider)
+            return;
+        try {
+            const urls = ((await ipcRenderer.invoke("get-current-urls")) ?? []);
+            const activeProviders = urls.map(url => inferProviderFromUrl(url));
+            const isActive = activeProviders.includes(provider);
+            if (isActive) {
+                // Close provider
+                ipcRenderer.send(`close-${provider}`, `close ${provider} now`);
+            }
+            else {
+                // Open provider
+                ipcRenderer.send(`open-${provider}`, `open ${provider} now`);
+            }
+            // Update toggles after a short delay to allow IPC to process
+            setTimeout(updateProviderToggles, 100);
         }
-        else {
-            closeClaudeMessage("close claude now");
-            openClaudeButton.textContent = "Show Claude";
+        catch (error) {
+            console.error(`Failed to toggle ${provider}`, error);
         }
     });
-}
-if (openGrokButton) {
-    openGrokButton.addEventListener("click", (event) => {
-        if (openGrokButton.textContent === "Show Grok") {
-            openGrokMessage("open grok now");
-            openGrokButton.textContent = "Hide Grok";
-        }
-        else {
-            closeGrokMessage("close grok now");
-            openGrokButton.textContent = "Show Grok";
-        }
-    });
-}
-if (openDeepSeekButton) {
-    openDeepSeekButton.addEventListener("click", (event) => {
-        if (openDeepSeekButton.textContent === "Show DeepSeek") {
-            openDeepSeekMessage("open deepseek now");
-            openDeepSeekButton.textContent = "Hide DeepSeek";
-        }
-        else {
-            closeDeepSeekMessage("close deepseek now");
-            openDeepSeekButton.textContent = "Show DeepSeek";
-        }
-    });
-}
-if (openLMArenaButton) {
-    openLMArenaButton.addEventListener("click", (event) => {
-        if (openLMArenaButton.textContent === "Show LMArena") {
-            openLMArena("open lm arena now");
-            openLMArenaButton.textContent = "Hide LMArena";
-        }
-        else {
-            closeLMArena("close lm arena now");
-            openLMArenaButton.textContent = "Show LMArena";
-        }
-    });
-}
+});
+// Initial update
+updateProviderToggles();
 if (textArea) {
     textArea.addEventListener("input", (event) => {
         logToWebPage(event.target.value);
@@ -197,67 +216,37 @@ if (textArea) {
         if (event.ctrlKey) {
             if (event.key === "Enter") {
                 event.preventDefault();
-                ipcRenderer.send("send-prompt");
+                ipcRenderer.send("send-prompt", textArea.value.trim());
                 console.log("Ctrl + Enter pressed");
                 textArea.value = "";
             }
         }
     });
 }
-if (promptDropdownButton) {
-    promptDropdownButton.addEventListener("click", (event) => {
-        console.log("Prompt dropdown button clicked");
-        event.stopPropagation();
-        ipcRenderer.send("open-form-window");
-    });
-}
-if (copyAgentPromptButton) {
-    copyAgentPromptButton.addEventListener("click", async () => {
+// Copy All Answers button handler
+const copyAllAnswersButton = document.getElementById("copy-all-answers");
+if (copyAllAnswersButton) {
+    copyAllAnswersButton.addEventListener("click", async () => {
+        const originalLabel = copyAllAnswersButton.textContent;
+        copyAllAnswersButton.textContent = "Copying...";
+        copyAllAnswersButton.disabled = true;
         try {
-            const urls = ((await ipcRenderer.invoke("get-current-urls")) ?? []);
-            const filteredUrls = urls
-                .map((url) => url.trim())
-                .filter((url) => url.length > 0);
-            if (filteredUrls.length === 0) {
-                copyAgentPromptButton.textContent = "No Tabs Found";
-                setTimeout(() => {
-                    copyAgentPromptButton.textContent = "Copy Agent Prompt";
-                }, 1500);
-                return;
-            }
-            const userPrompt = textArea?.value.trim();
-            const promptSections = [
-                "You are operating inside Comet Browser. For each link below, open it in Comet, read the page thoroughly, and craft the best possible answer for the user based only on these pages. Do not use any tools or sources outside Comet or the provided links.",
-            ];
-            if (userPrompt && userPrompt.length > 0) {
-                promptSections.push("\nUser request:\n" + userPrompt);
+            const result = await ipcRenderer.invoke("copy-all-answers");
+            if (result.success) {
+                copyAllAnswersButton.textContent = `Copied ${result.count} answer(s)!`;
             }
             else {
-                promptSections.push("\nUser request: (not provided)");
+                copyAllAnswersButton.textContent = result.message || "No Answers Found";
             }
-            const urlList = filteredUrls
-                .map((url, index) => `${index + 1}. ${url}`)
-                .join("\n");
-            promptSections.push("\nLinks to open in Comet (visit all before responding):\n" + urlList);
-            promptSections.push("\nAfter visiting the pages in Comet, synthesize the insights into a comprehensive answer. Reference the sources you used with their URLs.");
-            const agentPrompt = promptSections.join("\n");
-            ipcRenderer.send("copy-to-clipboard", agentPrompt);
-            const originalLabel = copyAgentPromptButton.textContent;
-            copyAgentPromptButton.textContent = "Copied!";
-            setTimeout(() => {
-                copyAgentPromptButton.textContent =
-                    originalLabel ?? "Copy Agent Prompt";
-            }, 1500);
         }
         catch (error) {
-            console.error("Failed to build agent prompt", error);
-            const originalLabel = copyAgentPromptButton.textContent;
-            copyAgentPromptButton.textContent = "Copy Failed";
-            setTimeout(() => {
-                copyAgentPromptButton.textContent =
-                    originalLabel ?? "Copy Agent Prompt";
-            }, 1500);
+            console.error("Failed to copy all answers", error);
+            copyAllAnswersButton.textContent = "Copy Failed";
         }
+        setTimeout(() => {
+            copyAllAnswersButton.textContent = originalLabel ?? "Copy All Answers";
+            copyAllAnswersButton.disabled = false;
+        }, 1500);
     });
 }
 ipcRenderer.on("inject-prompt", (event, selectedPrompt) => {
@@ -269,4 +258,78 @@ ipcRenderer.on("inject-prompt", (event, selectedPrompt) => {
     else {
         console.error("Textarea not found");
     }
+});
+// Initialize sessions sidebar after DOM is ready
+// Initialize embedded sessions sidebar (left, visible by default)
+if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", () => {
+        try {
+            initSessionSidebar();
+        }
+        catch (err) {
+            console.error(err);
+        }
+    }, { once: true });
+}
+else {
+    try {
+        initSessionSidebar();
+    }
+    catch (err) {
+        console.error(err);
+    }
+}
+// ----- View Headers Implementation -----
+function updateViewHeaders(layouts) {
+    if (!viewHeadersContainer) {
+        viewHeadersContainer = document.getElementById('view-headers-container');
+        if (!viewHeadersContainer)
+            return;
+    }
+    currentViewLayouts = layouts;
+    // Clear existing (simple approach; optimization possible if thrashing)
+    viewHeadersContainer.innerHTML = '';
+    layouts.forEach(layout => {
+        const header = document.createElement('div');
+        header.className = 'view-header';
+        header.style.left = `${layout.headerBounds.x}px`;
+        header.style.top = `${layout.headerBounds.y}px`;
+        header.style.width = `${layout.headerBounds.width}px`;
+        header.style.height = `${layout.headerBounds.height}px`;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = layout.url || '';
+        input.placeholder = 'Enter URL...';
+        // Prevent keydown from bubbling to global handlers (like Ctrl+Enter sender)
+        input.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') {
+                const url = input.value.trim();
+                if (url) {
+                    ipcRenderer.send('view-navigate', { id: layout.id, url });
+                }
+            }
+        });
+        const copyBtn = document.createElement('button');
+        copyBtn.textContent = 'Copy';
+        copyBtn.title = 'Copy URL to clipboard';
+        copyBtn.addEventListener('click', () => {
+            if (layout.url) {
+                ipcRenderer.send('copy-to-clipboard', layout.url);
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+            }
+        });
+        header.appendChild(input);
+        header.appendChild(copyBtn);
+        viewHeadersContainer?.appendChild(header);
+    });
+}
+// Listen for layout updates from main process
+ipcRenderer.on('view-layout-updated', (_event, layouts) => {
+    updateViewHeaders(layouts);
+});
+// Ensure container reference on load
+window.addEventListener('DOMContentLoaded', () => {
+    viewHeadersContainer = document.getElementById('view-headers-container');
 });

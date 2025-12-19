@@ -208,9 +208,6 @@ const textArea = document.getElementById(
   "prompt-input",
 ) as HTMLTextAreaElement | null;
 
-const copyAgentPromptButton = document.getElementById(
-  "copy-agent-prompt",
-) as HTMLButtonElement | null;
 
 // Provider toggle functionality
 const providerToggles = document.querySelectorAll<HTMLButtonElement>('.provider-toggle');
@@ -296,70 +293,6 @@ if (textArea) {
 }
 
 
-if (copyAgentPromptButton) {
-  copyAgentPromptButton.addEventListener("click", async () => {
-    try {
-      const urls = ((await ipcRenderer.invoke(
-        "get-current-urls",
-      )) ?? []) as string[];
-
-      const filteredUrls = urls
-        .map((url) => url.trim())
-        .filter((url) => url.length > 0);
-
-      if (filteredUrls.length === 0) {
-        copyAgentPromptButton.textContent = "No Tabs Found";
-        setTimeout(() => {
-          copyAgentPromptButton.textContent = "Copy Agent Prompt";
-        }, 1500);
-        return;
-      }
-
-      const userPrompt = textArea?.value.trim();
-
-      const promptSections = [
-        "You are operating inside Comet Browser. For each link below, open it in Comet, read the page thoroughly, and craft the best possible answer for the user based only on these pages. Do not use any tools or sources outside Comet or the provided links.",
-      ];
-
-      if (userPrompt && userPrompt.length > 0) {
-        promptSections.push("\nUser request:\n" + userPrompt);
-      } else {
-        promptSections.push("\nUser request: (not provided)");
-      }
-
-      const urlList = filteredUrls
-        .map((url, index) => `${index + 1}. ${url}`)
-        .join("\n");
-
-      promptSections.push(
-        "\nLinks to open in Comet (visit all before responding):\n" + urlList,
-      );
-
-      promptSections.push(
-        "\nAfter visiting the pages in Comet, synthesize the insights into a comprehensive answer. Reference the sources you used with their URLs.",
-      );
-
-      const agentPrompt = promptSections.join("\n");
-
-      ipcRenderer.send("copy-to-clipboard", agentPrompt);
-
-      const originalLabel = copyAgentPromptButton.textContent;
-      copyAgentPromptButton.textContent = "Copied!";
-      setTimeout(() => {
-        copyAgentPromptButton.textContent =
-          originalLabel ?? "Copy Agent Prompt";
-      }, 1500);
-    } catch (error) {
-      console.error("Failed to build agent prompt", error);
-      const originalLabel = copyAgentPromptButton.textContent;
-      copyAgentPromptButton.textContent = "Copy Failed";
-      setTimeout(() => {
-        copyAgentPromptButton.textContent =
-          originalLabel ?? "Copy Agent Prompt";
-      }, 1500);
-    }
-  });
-}
 
 // Copy All Answers button handler
 const copyAllAnswersButton = document.getElementById(

@@ -1,11 +1,9 @@
-"use strict";
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("electron", {
     ipcRenderer: {
         send: (channel, data) => {
             const validChannels = [
                 "save-prompt",
-                "open-form-window",
                 "enter-prompt",
                 "inject-prompt",
                 "send-prompt",
@@ -47,3 +45,4 @@ contextBridge.exposeInMainWorld("electron", {
         },
     },
 });
+export {};

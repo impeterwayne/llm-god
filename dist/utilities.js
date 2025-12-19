@@ -1,6 +1,17 @@
 import { WebContentsView } from "electron"; // Added WebPreferences type
 import { applyCustomStyles } from "./customStyles.js";
+import { DEVTOOLS_AUTO_OPEN } from "./config.js";
+// Control whether to auto-open DevTools on startup.
+// Edit src/config.ts (DEVTOOLS_AUTO_OPEN) for build-time control.
+// Or set env var ELECTRON_OPEN_DEVTOOLS_ON_STARTUP=true (runtime override).
+const OPEN_DEVTOOLS_ON_STARTUP = DEVTOOLS_AUTO_OPEN ||
+    (process.env.ELECTRON_OPEN_DEVTOOLS_ON_STARTUP ?? "").toLowerCase() ===
+        "true" ||
+    (process.env.SHOW_DEVTOOLS ?? "").toLowerCase() === "true";
 export function ensureDetachedDevTools(view) {
+    // If disabled, do nothing so DevTools can be opened manually later.
+    if (!OPEN_DEVTOOLS_ON_STARTUP)
+        return;
     const devToolsEvents = [
         "did-finish-load",
         "dom-ready",
@@ -72,7 +83,7 @@ export function ensureDetachedDevTools(view) {
  * @returns The newly created BrowserView
  */
 export function addBrowserView(mainWindow, url, websites, views, options = {}) {
-    const { webPreferences = {}, promptAreaHeight = 0 } = options;
+    const { webPreferences = {}, promptAreaHeight = 0, sidebarWidth = 0 } = options;
     const view = new WebContentsView({
         webPreferences: {
             nodeIntegration: false,
@@ -85,18 +96,20 @@ export function addBrowserView(mainWindow, url, websites, views, options = {}) {
     mainWindow.contentView.addChildView(view);
     const { width, height } = mainWindow.getContentBounds();
     const availableHeight = Math.max(height - promptAreaHeight, 0);
+    const offset = Math.ceil(Math.max(0, sidebarWidth));
     websites.push(url);
-    const viewWidth = Math.floor(width / websites.length);
+    const availableWidth = Math.max(width - offset, 0);
+    const viewWidth = Math.floor(availableWidth / websites.length);
     views.forEach((v, index) => {
         v.setBounds({
-            x: index * viewWidth,
+            x: offset + index * viewWidth,
             y: 0,
             width: viewWidth,
             height: availableHeight,
         });
     });
     view.setBounds({
-        x: (websites.length - 1) * viewWidth,
+        x: offset + (websites.length - 1) * viewWidth,
         y: 0,
         width: viewWidth,
         height: availableHeight,
@@ -110,7 +123,7 @@ export function addBrowserView(mainWindow, url, websites, views, options = {}) {
 }
 export function removeBrowserView(mainWindow, viewToRemove, // Changed to viewToRemove for clarity
 websites, views, options = {}) {
-    const { promptAreaHeight = 0 } = options;
+    const { promptAreaHeight = 0, sidebarWidth = 0 } = options;
     const viewIndex = views.indexOf(viewToRemove);
     if (viewIndex === -1)
         return;
@@ -124,10 +137,12 @@ websites, views, options = {}) {
         return;
     const { width, height } = mainWindow.getContentBounds();
     const availableHeight = Math.max(height - promptAreaHeight, 0);
-    const viewWidth = Math.floor(width / views.length);
+    const offset = Math.ceil(Math.max(0, sidebarWidth));
+    const availableWidth = Math.max(width - offset, 0);
+    const viewWidth = Math.floor(availableWidth / views.length);
     views.forEach((v, index) => {
         v.setBounds({
-            x: index * viewWidth,
+            x: offset + index * viewWidth,
             y: 0,
             width: viewWidth,
             height: availableHeight,
@@ -371,18 +386,15 @@ export function injectPromptIntoView(view, prompt) {
     }
 }
 export async function simulateFileDropInView(view, files) {
-    if (!files.length) {
+    if (!files.length)
         return;
-    }
     const script = `
     (async (files) => {
       try {
         const decodeBase64 = (base64) => {
           const binary = atob(base64);
           const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-          }
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
           return bytes;
         };
 
@@ -396,75 +408,352 @@ export async function simulateFileDropInView(view, files) {
 
         const generatedFiles = files.map(createFile);
         const hostname = location.hostname;
-        console.log('[LLM-God] Processing', generatedFiles.length, 'files for', hostname);
-        const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+        const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
-        const buildDataTransfer = () => {
+        // ---------------------------
+        // GEMINI-ONLY (de-duped + single-dispatch)
+        // ---------------------------
+        if (hostname.includes('gemini.google.com')) {
+          const sig = generatedFiles.map(f => \`\${f.name}:\${f.size}:\${f.lastModified}\`).join('|');
+          const now = Date.now();
+          const lockKey = '__LLM_GOD_GEMINI_LOCK__';
+
+          // simple in-tab de-dupe (5s window)
+          try {
+            const lock = window[lockKey];
+            if (lock && lock.sig === sig && (now - lock.ts) < 5000) {
+              console.log('[LLM-God] Gemini: duplicate attempt suppressed');
+              return true;
+            }
+            window[lockKey] = { sig, ts: now };
+            setTimeout(() => {
+              const l = window[lockKey];
+              if (l && l.sig === sig) l.ts = 0;
+            }, 6000);
+          } catch {}
+
+          console.log('[LLM-God] Gemini path: input -> paste -> DnD');
+
+          // Build one DataTransfer reused across strategies.
           const dt = new DataTransfer();
-          generatedFiles.forEach(file => dt.items.add(file));
-          return dt;
+          generatedFiles.forEach(f => dt.items.add(f));
+
+          // Many Google uploaders call webkitGetAsEntry()
+          for (const item of dt.items) {
+            if (!('webkitGetAsEntry' in item)) {
+              try {
+                Object.defineProperty(item, 'webkitGetAsEntry', {
+                  value: () => ({
+                    isFile: true,
+                    isDirectory: false,
+                    file: (cb) => cb(item.getAsFile()),
+                    name: item.getAsFile()?.name || 'file',
+                  }),
+                  configurable: true,
+                });
+              } catch {}
+            }
+          }
+
+          // Deep/shadow/iframe search for <input type="file">
+          const enumerateRoots = () => {
+            const roots = [document];
+            const seen = new Set();
+            const push = (root) => {
+              if (!root || seen.has(root)) return;
+              seen.add(root);
+              roots.push(root);
+              const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+              let n;
+              while ((n = walker.nextNode())) {
+                const el = n;
+                if (el.shadowRoot) push(el.shadowRoot);
+                if (el.tagName === 'IFRAME') {
+                  try { if (el.contentDocument) push(el.contentDocument); } catch {}
+                }
+              }
+            };
+            push(document);
+            return roots;
+          };
+
+          const findAnyFileInput = () => {
+            for (const root of enumerateRoots()) {
+              const q = root.querySelector?.('input[type="file"]');
+              if (q) return q;
+            }
+            return null;
+          };
+
+          // 1) Prefer file input assignment (dispatch ONLY 'change')
+          const deadline = Date.now() + 5000;
+          let input = findAnyFileInput();
+          while (!input && Date.now() < deadline) {
+            await wait(120);
+            input = findAnyFileInput();
+          }
+          if (input) {
+            console.log('[LLM-God] Gemini: file input found, assigning files (change only)');
+            try {
+              const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
+              if (desc?.set) desc.set.call(input, dt.files);
+              else Object.defineProperty(input, 'files', { configurable: true, value: dt.files });
+
+              // IMPORTANT: trigger only 'change' to avoid double handlers
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+              await wait(150);
+              console.log('[LLM-God] ✓ Gemini upload via input (single change)');
+              return true;
+            } catch (e) {
+              console.warn('[LLM-God] Gemini input assignment failed, trying paste:', e);
+            }
+          }
+
+          // 2) Paste fallback (dispatch to a single deepest target)
+          const pasteTargets = [
+            document.querySelector('[contenteditable="true"]'),
+            document.querySelector('.ql-editor.textarea'),
+            document.querySelector('[role="textbox"]'),
+          ].filter(Boolean);
+          const targetForPaste = pasteTargets[0] || document.activeElement || document.querySelector('form') || document.body;
+
+          const dispatchPaste = (el) => {
+            if (!el) return false;
+            try { el.focus?.(); } catch {}
+            let ev;
+            try {
+              ev = new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                clipboardData: dt,
+              });
+            } catch {
+              ev = new Event('paste', { bubbles: true, cancelable: true });
+            }
+            try { Object.defineProperty(ev, 'clipboardData', { value: dt }); } catch {}
+            return el.dispatchEvent(ev);
+          };
+
+          if (dispatchPaste(targetForPaste)) {
+            console.log('[LLM-God] ✓ Gemini paste dispatched (single target)');
+            return true;
+          }
+
+          // 3) Last resort: DnD with dragover cancellation
+          const pickGeminiDropTarget = () =>
+            document.querySelector('form')
+            || document.querySelector('[contenteditable="true"]')
+            || document.querySelector('.ql-editor.textarea')
+            || document.body;
+
+          const target = pickGeminiDropTarget();
+          if (!target) {
+            console.error('[LLM-God] Gemini: no drop target found');
+            return false;
+          }
+
+          const preventDragover = (e) => {
+            e.preventDefault();
+            if (e.dataTransfer) { try { e.dataTransfer.dropEffect = 'copy'; } catch {} }
+          };
+          document.addEventListener('dragover', preventDragover, { capture: true });
+          target.addEventListener('dragover', preventDragover, { capture: true });
+
+          const rect = target.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+
+          const mk = (type) => {
+            const ev = new DragEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              clientX: x,
+              clientY: y,
+              dataTransfer: dt,
+              view: window,
+            });
+            try { Object.defineProperty(ev, 'dataTransfer', { value: dt }); } catch {}
+            try {
+              dt.effectAllowed = 'all';
+              if (type === 'dragover' || type === 'drop') dt.dropEffect = 'copy';
+            } catch {}
+            return ev;
+          };
+
+          document.dispatchEvent(mk('dragenter'));
+          await wait(25);
+          target.dispatchEvent(mk('dragenter'));
+          await wait(25);
+          for (let i = 0; i < 4; i++) {
+            document.dispatchEvent(mk('dragover'));
+            await wait(18);
+            target.dispatchEvent(mk('dragover'));
+            await wait(18);
+          }
+          target.dispatchEvent(mk('drop'));
+          await wait(100);
+          document.dispatchEvent(mk('dragend'));
+
+          document.removeEventListener('dragover', preventDragover, { capture: true });
+          target.removeEventListener('dragover', preventDragover, { capture: true });
+
+          console.log('[LLM-God] ✓ Gemini DnD fallback completed (single sequence)');
+          return true;
+        }
+        // ---------------------------
+        // END GEMINI-ONLY
+        // ---------------------------
+
+        // ----- PERPLEXITY (unchanged) -----
+        if (hostname.includes('perplexity.ai')) {
+          console.log('[LLM-God] Using Perplexity-specific file upload');
+          const waitForFileInput = (timeout = 10000) => {
+            return new Promise((resolve, reject) => {
+              const existing = document.querySelector('input[type="file"]');
+              if (existing) { resolve(existing); return; }
+              const observer = new MutationObserver((mutations, obs) => {
+                const element = document.querySelector('input[type="file"]');
+                if (element) { obs.disconnect(); resolve(element); }
+              });
+              observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+              setTimeout(() => { observer.disconnect(); reject(new Error('File input not found for Perplexity')); }, timeout);
+            });
+          };
+          try {
+            const fileInput = await waitForFileInput();
+            console.log('[LLM-God] Perplexity file input ready!');
+            const dtLocal = new DataTransfer();
+            generatedFiles.forEach(f => dtLocal.items.add(f));
+            try {
+              Object.defineProperty(fileInput, 'files', { value: dtLocal.files, configurable: true });
+            } catch (e) {
+              const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
+              if (descriptor?.set) { descriptor.set.call(fileInput, dtLocal.files); }
+            }
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+            await wait(200);
+            console.log('[LLM-God] ✓ Perplexity file upload complete');
+            return true;
+          } catch (error) {
+            console.error('[LLM-God] ❌ Perplexity file upload failed:', error);
+            return false;
+          }
+        }
+
+        // ----- CLAUDE (unchanged) -----
+        if (hostname.includes('claude.ai')) {
+          console.log('[LLM-God] Using Claude-specific file upload');
+          const waitForFileInput = (timeout = 10000) => {
+            return new Promise((resolve, reject) => {
+              const findBestInput = () => {
+                const inputs = document.querySelectorAll('input[type="file"]');
+                if (inputs.length === 0) return null;
+                for (let i = inputs.length - 1; i >= 0; i--) {
+                  const input = inputs[i];
+                  if (!input.disabled) return input;
+                }
+                return inputs[inputs.length - 1];
+              };
+              const existing = findBestInput();
+              if (existing) { resolve(existing); return; }
+              const observer = new MutationObserver((mutations, obs) => {
+                const element = findBestInput();
+                if (element) { obs.disconnect(); resolve(element); }
+              });
+              observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+              setTimeout(() => {
+                observer.disconnect();
+                const lastChance = findBestInput();
+                if (lastChance) resolve(lastChance); else reject(new Error('File input not found for Claude'));
+              }, timeout);
+            });
+          };
+          try {
+            const targetInput = await waitForFileInput();
+            console.log('[LLM-God] Claude file input found, assigning files...');
+            const dtLocal = new DataTransfer();
+            generatedFiles.forEach(f => dtLocal.items.add(f));
+            try {
+              Object.defineProperty(targetInput, 'files', { value: dtLocal.files, configurable: true });
+            } catch (e) {
+              const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
+              if (descriptor?.set) descriptor.set.call(targetInput, dtLocal.files);
+            }
+            targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+            await wait(100);
+            console.log('[LLM-God] ✓ Claude file upload complete via input');
+            return true;
+          } catch (error) {
+            console.log('[LLM-God] Claude file input failed:', error.message, 'Trying drop zone fallback...');
+            const simulateDragAndDrop = async (target) => {
+              if (!target) return false;
+              const dtLocal = new DataTransfer();
+              generatedFiles.forEach(f => dtLocal.items.add(f));
+              const createDragEvent = (type) => new DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: dtLocal, view: window });
+              document.dispatchEvent(createDragEvent('dragenter'));
+              target.dispatchEvent(createDragEvent('dragenter'));
+              target.dispatchEvent(createDragEvent('dragover'));
+              target.dispatchEvent(createDragEvent('drop'));
+              target.dispatchEvent(createDragEvent('dragend'));
+              document.dispatchEvent(createDragEvent('dragend'));
+              target.dispatchEvent(new Event('dragleave', { bubbles: true }));
+              document.dispatchEvent(new Event('dragleave', { bubbles: true }));
+              return true;
+            };
+            const dropZone = document.querySelector('[data-testid="chat-input-dropzone"]')
+                           || document.querySelector('.MessageComposerDropzone')
+                           || document.querySelector('fieldset')
+                           || document.querySelector('[role="textbox"]');
+            const ok = await simulateDragAndDrop(dropZone);
+            return ok;
+          }
+        }
+
+        // ----- GENERIC (unchanged) -----
+        const buildDataTransfer = () => {
+          const dtLocal = new DataTransfer();
+          generatedFiles.forEach(file => dtLocal.items.add(file));
+          return dtLocal;
         };
 
-        /**
-         * ---------------------------------------------------------------------
-         * GENERIC DRAG AND DROP SIMULATION HELPER
-         * ---------------------------------------------------------------------
-         */
         const simulateDragAndDrop = async (target) => {
           if (!target) {
             console.error('[LLM-God] No drop target found for simulation');
             return false;
           }
-          console.log('[LLM-God] Using generic drop simulation for target:', target.tagName, target.className);
-          
           const rect = target.getBoundingClientRect();
-          const coords = {
-            x: rect.left + rect.width / 2,
-            y: rect.top + rect.height / 2
-          };
+          const coords = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
           const isGemini = hostname.includes('gemini.google.com');
           const handlers = new Map();
 
-          // Add temporary event listeners to prevent default browser behavior
           if (!isGemini) {
             const createPreventHandler = () => (e) => {
               e.preventDefault();
               e.stopPropagation();
-              if (e.dataTransfer) {
-                try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
-              }
+              if (e.dataTransfer) { try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {} }
             };
-            const captureEvents = ['dragenter', 'dragover'];
-            captureEvents.forEach(eventType => {
-              const handler = createPreventHandler();
-              handlers.set(eventType, handler);
-              target.addEventListener(eventType, handler, { capture: true });
-              document.addEventListener(eventType, handler, { capture: true });
+            ['dragenter', 'dragover'].forEach(type => {
+              const h = createPreventHandler();
+              handlers.set(type, h);
+              target.addEventListener(type, h, { capture: true });
+              document.addEventListener(type, h, { capture: true });
             });
           }
 
-          // Create a synthetic DragEvent
           const createDragEvent = (type) => {
-            const dt = buildDataTransfer();
-            try { Object.defineProperty(dt, 'types', { value: ['Files'] }); } catch (e) {}
-            try { dt.effectAllowed = 'all'; } catch (e) {}
-            if (type === 'dragover' || type === 'drop') {
-              try { dt.dropEffect = 'copy'; } catch (e) {}
-            }
-            const event = new DragEvent(type, {
-              bubbles: true,
-              cancelable: true,
-              composed: true,
-              dataTransfer: dt,
-              clientX: coords.x,
-              clientY: coords.y,
-              view: window,
+            const dtLocal = buildDataTransfer();
+            try { Object.defineProperty(dtLocal, 'types', { value: ['Files'] }); } catch {}
+            try { dtLocal.effectAllowed = 'all'; } catch {}
+            if (type === 'dragover' || type === 'drop') { try { dtLocal.dropEffect = 'copy'; } catch {} }
+            const ev = new DragEvent(type, {
+              bubbles: true, cancelable: true, composed: true, dataTransfer: dtLocal,
+              clientX: coords.x, clientY: coords.y, view: window
             });
-            try { Object.defineProperty(event, 'dataTransfer', { value: dt }); } catch (e) {}
-            return event;
+            try { Object.defineProperty(ev, 'dataTransfer', { value: dtLocal }); } catch {}
+            return ev;
           };
 
-          // Execute drag-and-drop sequence
           document.dispatchEvent(createDragEvent('dragenter'));
           await wait(30);
           target.dispatchEvent(createDragEvent('dragenter'));
@@ -480,159 +769,41 @@ export async function simulateFileDropInView(view, files) {
           target.dispatchEvent(createDragEvent('dragend'));
           document.dispatchEvent(createDragEvent('dragend'));
           await wait(100);
-          target.dispatchEvent(createDragEvent('dragleave'));
-          document.dispatchEvent(createDragEvent('dragleave'));
-          await wait(50);
+          target.dispatchEvent(new Event('dragleave', { bubbles: true }));
+          document.dispatchEvent(new Event('dragleave', { bubbles: true }));
 
-          // Cleanup handlers
           if (!isGemini) {
-            handlers.forEach((handler, eventType) => {
-              target.removeEventListener(eventType, handler, { capture: true });
-              document.removeEventListener(eventType, handler, { capture: true });
+            handlers.forEach((h, type) => {
+              target.removeEventListener(type, h, { capture: true });
+              document.removeEventListener(type, h, { capture: true });
             });
           }
           return true;
         };
 
-
-        // CLAUDE-SPECIFIC IMPLEMENTATION
-        if (hostname.includes('claude.ai')) {
-          console.log('[LLM-God] Using Claude-specific file upload');
-          const waitForFileInput = (timeout = 10000) => {
-            return new Promise((resolve, reject) => {
-              const findBestInput = () => {
-                const inputs = document.querySelectorAll('input[type="file"]');
-                if (inputs.length === 0) return null;
-                for (let i = inputs.length - 1; i >= 0; i--) {
-                  const input = inputs[i];
-                  if (!input.disabled) return input;
-                }
-                return inputs[inputs.length - 1]; // fallback
-              };
-              const existing = findBestInput();
-              if (existing) {
-                resolve(existing);
-                return;
-              }
-              const observer = new MutationObserver((mutations, obs) => {
-                const element = findBestInput();
-                if (element) {
-                  obs.disconnect();
-                  resolve(element);
-                }
-              });
-              observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-              setTimeout(() => {
-                observer.disconnect();
-                const lastChance = findBestInput();
-                if (lastChance) { resolve(lastChance); } 
-                else { reject(new Error('File input not found for Claude')); }
-              }, timeout);
-            });
-          };
-          
-          try {
-            const targetInput = await waitForFileInput();
-            console.log('[LLM-God] Claude file input found, assigning files...');
-            const dt = buildDataTransfer();
-            try {
-              Object.defineProperty(targetInput, 'files', { value: dt.files, configurable: true });
-            } catch (e) {
-              const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
-              if (descriptor?.set) { descriptor.set.call(targetInput, dt.files); }
-            }
-            targetInput.dispatchEvent(new Event('change', { bubbles: true }));
-            targetInput.dispatchEvent(new Event('input', { bubbles: true }));
-            await wait(100);
-            console.log('[LLM-God] ✓ Claude file upload complete via input');
-            return true;
-          } catch (error) {
-            console.log('[LLM-God] Claude file input failed:', error.message, 'Trying drop zone fallback...');
-            const dropZone = document.querySelector('[data-testid="chat-input-dropzone"]') ||
-                             document.querySelector('.MessageComposerDropzone') ||
-                             document.querySelector('fieldset') ||
-                             document.querySelector('[role="textbox"]');
-            
-            const success = await simulateDragAndDrop(dropZone);
-            if (success) {
-                console.log('[LLM-God] ✓ Claude drop fallback complete');
-            } else {
-                console.error('[LLM-God] ❌ Claude drop fallback failed');
-            }
-            return success;
-          }
-        }
-
-        // PERPLEXITY-SPECIFIC IMPLEMENTATION
-        if (hostname.includes('perplexity.ai')) {
-          console.log('[LLM-God] Using Perplexity-specific file upload');
-          const waitForFileInput = (timeout = 10000) => {
-            return new Promise((resolve, reject) => {
-              const existing = document.querySelector('input[type="file"]');
-              if (existing) {
-                resolve(existing);
-                return;
-              }
-              const observer = new MutationObserver((mutations, obs) => {
-                const element = document.querySelector('input[type="file"]');
-                if (element) {
-                  obs.disconnect();
-                  resolve(element);
-                }
-              });
-              observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-              setTimeout(() => {
-                observer.disconnect();
-                reject(new Error('File input not found for Perplexity'));
-              }, timeout);
-            });
-          };
-          
-          try {
-            const fileInput = await waitForFileInput();
-            console.log('[LLM-God] Perplexity file input ready!');
-            const dt = buildDataTransfer();
-            try {
-              Object.defineProperty(fileInput, 'files', { value: dt.files, configurable: true });
-            } catch (e) {
-              const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
-              if (descriptor?.set) { descriptor.set.call(fileInput, dt.files); }
-            }
-            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-            fileInput.dispatchEvent(new Event('input', { bubbles: true }));
-            await wait(200);
-            console.log('[LLM-God] ✓ Perplexity file upload complete');
-            return true;
-          } catch (error) {
-            console.error('[LLM-God] ❌ Perplexity file upload failed:', error);
-            return false;
-          }
-        }
-
-        // GENERIC IMPLEMENTATION FOR OTHER SITES
         const findTarget = () => {
           if (hostname.includes('chatgpt.com')) {
-            return document.querySelector('[data-testid="attachment-dropzone"]') ||
-                   document.querySelector('[data-testid="composer-background"]') ||
-                   document.querySelector('form');
+            return document.querySelector('[data-testid="attachment-dropzone"]')
+                || document.querySelector('[data-testid="composer-background"]')
+                || document.querySelector('form');
           }
           if (hostname.includes('gemini.google.com')) {
-            return document.querySelector('form') ||
-                   document.querySelector('[contenteditable="true"]') ||
-                   document.querySelector('.ql-editor.textarea') ||
-                   document.body;
+            // Gemini handled earlier; left for parity
+            return document.querySelector('form')
+                || document.querySelector('[contenteditable="true"]')
+                || document.querySelector('.ql-editor.textarea')
+                || document.body;
+          }
+          if (hostname.includes('perplexity.ai')) {
+            return document.querySelector('form') || document.querySelector('[role="textbox"]') || document.body;
           }
           return document.querySelector('form') || document.body;
         };
 
         const target = findTarget();
         const success = await simulateDragAndDrop(target);
-
-        if (success) {
-            console.log('[LLM-God] ✓ Generic file drop simulation complete');
-        } else {
-            console.error('[LLM-God] ❌ Generic file drop simulation failed');
-        }
+        if (success) console.log('[LLM-God] ✓ Generic file drop simulation complete');
+        else console.error('[LLM-God] ❌ Generic file drop simulation failed');
         return success;
 
       } catch (error) {
@@ -642,9 +813,7 @@ export async function simulateFileDropInView(view, files) {
     })(%files%);
   `;
     const scriptWithFiles = script.replace("%files%", JSON.stringify(files));
-    await view.webContents
-        .executeJavaScript(scriptWithFiles, true)
-        .catch((error) => {
+    await view.webContents.executeJavaScript(scriptWithFiles, true).catch((error) => {
         console.error("Failed to execute drag-and-drop simulation", error);
     });
 }
@@ -671,12 +840,36 @@ export function sendPromptInView(view) {
     }
     else if (view.id && view.id.match("perplexity")) {
         view.webContents.executeJavaScript(`
-                {
-        var buttons = Array.from(document.querySelectorAll('button.bg-super'));
-        if (buttons[0]) {
-          var buttonsWithSvgPath = buttons.filter(button => button.querySelector('svg path'));
-          var button = buttonsWithSvgPath[buttonsWithSvgPath.length - 1];
+      {
+        console.log('[Perplexity] Looking for submit button...');
+        
+        var button = document.querySelector('button[aria-label="Submit"]');
+
+        if (!button) {
+           console.log('[Perplexity] aria-label="Submit" not found, trying data-testid');
+           button = document.querySelector('[data-testid="submit-button"]');
+        }
+        
+        // Fallback to class-based search
+        if (!button) {
+          console.log('[Perplexity] data-testid not found, falling back to class selector');
+          var buttons = Array.from(document.querySelectorAll('button.bg-super'));
+          if (buttons.length > 0) {
+            // Usually the last one or one with an SVG
+             var buttonsWithSvg = buttons.filter(btn => btn.querySelector('svg'));
+             if (buttonsWithSvg.length > 0) {
+                button = buttonsWithSvg[buttonsWithSvg.length - 1];
+             }
+          }
+        }
+        
+        if (button) {
+          console.log('[Perplexity] Submit button found, clicking...');
+          button.focus();
           button.click();
+          console.log('[Perplexity] Submit button clicked successfully');
+        } else {
+          console.error('[Perplexity] Submit button not found');
         }
       }
                 `);
@@ -695,29 +888,59 @@ export function sendPromptInView(view) {
     }
     else if (view.id && view.id.match("grok")) {
         view.webContents.executeJavaScript(`
-        {
-        var btn = document.querySelector('button[aria-label*="Submit"]');
-        if (btn) {
-            btn.focus();
-            btn.disabled = false;
-            btn.click();
-          } else {
-            console.log("Element not found");
-          }
-      }`);
+    {
+      // Try button click first
+      var btn = document.querySelector('button[aria-label*="Submit"]')
+             || document.querySelector('button[aria-label*="Send"]')
+             || document.querySelector('button[type="submit"]');
+      
+      if (btn) {
+        btn.focus();
+        btn.disabled = false;
+        btn.click();
+        console.log('[Grok] Send button clicked');
+      } else {
+        // Fallback to keyboard simulation
+        var textarea = document.querySelector('textarea');
+        if (textarea) {
+          textarea.focus();
+          var event = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            metaKey: true,
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          });
+          textarea.dispatchEvent(event);
+          console.log('[Grok] Enter key simulated as fallback');
+        } else {
+          console.log('[Grok] No send method found');
+        }
+      }
+    }
+  `);
     }
     else if (view.id && view.id.match("deepseek")) {
         view.webContents.executeJavaScript(`
-        {
-        var buttons = Array.from(document.querySelectorAll('div[role="button"]'));
-        var btn = buttons[2]
-        if (btn) {
-            btn.focus();
-            btn.click();
-          } else {
-            console.log("Element not found");
-          }
-    }`);
+     {
+       var textarea = document.querySelector('textarea');
+       if (textarea) {
+         textarea.focus();
+         var event = new KeyboardEvent('keydown', {
+           key: 'Enter',
+           code: 'Enter',
+           keyCode: 13,
+           bubbles: true,
+           cancelable: true
+         });
+         textarea.dispatchEvent(event);
+         console.log('[DeepSeek] Enter key simulated for message submission');
+       } else {
+         console.log('[DeepSeek] Textarea not found');
+       }
+     }`);
     }
     else if (view.id && view.id.match("lmarena")) {
         view.webContents.executeJavaScript(`
@@ -731,5 +954,119 @@ export function sendPromptInView(view) {
             console.log("Element not found");
           }
     }`);
+    }
+}
+/**
+ * Simulates clicking the copy button to copy the latest answer from a view.
+ * Returns true if copy was triggered, null if failed.
+ */
+export async function copyAnswerFromView(view) {
+    try {
+        if (view.id && view.id.match("chatgpt")) {
+            // ChatGPT: Click copy button and read clipboard from page context
+            const result = await view.webContents.executeJavaScript(`
+        (async () => {
+          let copyButtons = document.querySelectorAll('button[data-testid="copy-turn-action-button"]');
+          if (copyButtons.length === 0) {
+            copyButtons = document.querySelectorAll('button[aria-label="Copy"]');
+          }
+          if (copyButtons.length === 0) return null;
+          
+          const lastCopyBtn = copyButtons[copyButtons.length - 1];
+          
+          // Trigger hover on parent to make button clickable
+          const parent = lastCopyBtn.closest('div[class*="group"]') || lastCopyBtn.parentElement;
+          if (parent) {
+            parent.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 200));
+          }
+          
+          lastCopyBtn.click();
+          await new Promise(r => setTimeout(r, 300));
+          
+          try {
+            return await navigator.clipboard.readText();
+          } catch (e) {
+            return '__CLIPBOARD_READ_FAILED__';
+          }
+        })()
+      `);
+            if (result && result !== '__CLIPBOARD_READ_FAILED__') {
+                // Write the text back to clipboard via main process
+                return result;
+            }
+            return result === '__CLIPBOARD_READ_FAILED__' ? "__COPIED__" : null;
+        }
+        else if (view.id && view.id.match("perplexity")) {
+            // Perplexity: Click copy button
+            const result = await view.webContents.executeJavaScript(`
+        (async () => {
+          const copyButtons = document.querySelectorAll('button[aria-label="Copy"]');
+          if (copyButtons.length > 0) {
+            const lastCopyBtn = copyButtons[copyButtons.length - 1];
+            lastCopyBtn.click();
+            await new Promise(r => setTimeout(r, 100));
+            return true;
+          }
+          return false;
+        })()
+      `);
+            return result ? "__COPIED__" : null;
+        }
+        else if (view.id && view.id.match("gemini")) {
+            // Gemini: Click More button first, then Copy button
+            const result = await view.webContents.executeJavaScript(`
+        (async () => {
+          let moreButtons = document.querySelectorAll('button[data-test-id="more-menu-button"]');
+          if (moreButtons.length === 0) {
+            moreButtons = document.querySelectorAll('button[aria-label="Show more options"]');
+          }
+          if (moreButtons.length === 0) {
+            moreButtons = document.querySelectorAll('button:has(mat-icon[fonticon="more_vert"])');
+          }
+          if (moreButtons.length === 0) return false;
+          
+          const lastMoreBtn = moreButtons[moreButtons.length - 1];
+          lastMoreBtn.click();
+          await new Promise(r => setTimeout(r, 500));
+          
+          let copyBtn = document.querySelector('button[data-test-id="copy-response-button"]');
+          if (!copyBtn) {
+            const allButtons = document.querySelectorAll('button');
+            for (const btn of allButtons) {
+              const label = btn.querySelector('.item-label');
+              if (label && label.textContent && label.textContent.trim().toLowerCase() === 'copy') {
+                copyBtn = btn;
+                break;
+              }
+            }
+          }
+          
+          if (copyBtn) {
+            copyBtn.click();
+            await new Promise(r => setTimeout(r, 300));
+            document.body.click();
+            
+            try {
+              return await navigator.clipboard.readText();
+            } catch (e) {
+              return '__CLIPBOARD_READ_FAILED__';
+            }
+          }
+          
+          document.body.click();
+          return false;
+        })()
+      `);
+            if (result && result !== '__CLIPBOARD_READ_FAILED__' && result !== false) {
+                return result;
+            }
+            return result === '__CLIPBOARD_READ_FAILED__' ? "__COPIED__" : null;
+        }
+        return null;
+    }
+    catch (error) {
+        console.error("Failed to copy answer from view:", view.id, error);
+        return null;
     }
 }
