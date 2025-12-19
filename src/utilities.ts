@@ -1015,3 +1015,121 @@ export function sendPromptInView(view: CustomBrowserView) {
     }`);
   }
 }
+
+/**
+ * Simulates clicking the copy button to copy the latest answer from a view.
+ * Returns true if copy was triggered, null if failed.
+ */
+export async function copyAnswerFromView(view: CustomBrowserView): Promise<string | null> {
+  try {
+    if (view.id && view.id.match("chatgpt")) {
+      // ChatGPT: Click copy button and read clipboard from page context
+      const result = await view.webContents.executeJavaScript(`
+        (async () => {
+          let copyButtons = document.querySelectorAll('button[data-testid="copy-turn-action-button"]');
+          if (copyButtons.length === 0) {
+            copyButtons = document.querySelectorAll('button[aria-label="Copy"]');
+          }
+          if (copyButtons.length === 0) return null;
+          
+          const lastCopyBtn = copyButtons[copyButtons.length - 1];
+          
+          // Trigger hover on parent to make button clickable
+          const parent = lastCopyBtn.closest('div[class*="group"]') || lastCopyBtn.parentElement;
+          if (parent) {
+            parent.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 200));
+          }
+          
+          lastCopyBtn.click();
+          await new Promise(r => setTimeout(r, 300));
+          
+          try {
+            return await navigator.clipboard.readText();
+          } catch (e) {
+            return '__CLIPBOARD_READ_FAILED__';
+          }
+        })()
+      `);
+
+      if (result && result !== '__CLIPBOARD_READ_FAILED__') {
+        // Write the text back to clipboard via main process
+        return result;
+      }
+      return result === '__CLIPBOARD_READ_FAILED__' ? "__COPIED__" : null;
+
+    } else if (view.id && view.id.match("perplexity")) {
+      // Perplexity: Click copy button
+      const result = await view.webContents.executeJavaScript(`
+        (async () => {
+          const copyButtons = document.querySelectorAll('button[aria-label="Copy"]');
+          if (copyButtons.length > 0) {
+            const lastCopyBtn = copyButtons[copyButtons.length - 1];
+            lastCopyBtn.click();
+            await new Promise(r => setTimeout(r, 100));
+            return true;
+          }
+          return false;
+        })()
+      `);
+      return result ? "__COPIED__" : null;
+
+    } else if (view.id && view.id.match("gemini")) {
+      // Gemini: Click More button first, then Copy button
+      const result = await view.webContents.executeJavaScript(`
+        (async () => {
+          let moreButtons = document.querySelectorAll('button[data-test-id="more-menu-button"]');
+          if (moreButtons.length === 0) {
+            moreButtons = document.querySelectorAll('button[aria-label="Show more options"]');
+          }
+          if (moreButtons.length === 0) {
+            moreButtons = document.querySelectorAll('button:has(mat-icon[fonticon="more_vert"])');
+          }
+          if (moreButtons.length === 0) return false;
+          
+          const lastMoreBtn = moreButtons[moreButtons.length - 1];
+          lastMoreBtn.click();
+          await new Promise(r => setTimeout(r, 500));
+          
+          let copyBtn = document.querySelector('button[data-test-id="copy-response-button"]');
+          if (!copyBtn) {
+            const allButtons = document.querySelectorAll('button');
+            for (const btn of allButtons) {
+              const label = btn.querySelector('.item-label');
+              if (label && label.textContent && label.textContent.trim().toLowerCase() === 'copy') {
+                copyBtn = btn;
+                break;
+              }
+            }
+          }
+          
+          if (copyBtn) {
+            copyBtn.click();
+            await new Promise(r => setTimeout(r, 300));
+            document.body.click();
+            
+            try {
+              return await navigator.clipboard.readText();
+            } catch (e) {
+              return '__CLIPBOARD_READ_FAILED__';
+            }
+          }
+          
+          document.body.click();
+          return false;
+        })()
+      `);
+
+      if (result && result !== '__CLIPBOARD_READ_FAILED__' && result !== false) {
+        return result;
+      }
+      return result === '__CLIPBOARD_READ_FAILED__' ? "__COPIED__" : null;
+    }
+
+    return null;
+  } catch (error) {
+    console.error("Failed to copy answer from view:", view.id, error);
+    return null;
+  }
+}
+

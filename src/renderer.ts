@@ -361,6 +361,37 @@ if (copyAgentPromptButton) {
   });
 }
 
+// Copy All Answers button handler
+const copyAllAnswersButton = document.getElementById(
+  "copy-all-answers",
+) as HTMLButtonElement | null;
+
+if (copyAllAnswersButton) {
+  copyAllAnswersButton.addEventListener("click", async () => {
+    const originalLabel = copyAllAnswersButton.textContent;
+    copyAllAnswersButton.textContent = "Copying...";
+    copyAllAnswersButton.disabled = true;
+
+    try {
+      const result = await ipcRenderer.invoke("copy-all-answers");
+
+      if (result.success) {
+        copyAllAnswersButton.textContent = `Copied ${result.count} answer(s)!`;
+      } else {
+        copyAllAnswersButton.textContent = result.message || "No Answers Found";
+      }
+    } catch (error) {
+      console.error("Failed to copy all answers", error);
+      copyAllAnswersButton.textContent = "Copy Failed";
+    }
+
+    setTimeout(() => {
+      copyAllAnswersButton.textContent = originalLabel ?? "Copy All Answers";
+      copyAllAnswersButton.disabled = false;
+    }, 1500);
+  });
+}
+
 ipcRenderer.on("inject-prompt", (event, selectedPrompt: string) => {
   console.log("Injecting prompt into textarea:", selectedPrompt);
 

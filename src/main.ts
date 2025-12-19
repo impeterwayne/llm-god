@@ -16,6 +16,7 @@ import { exec } from "child_process";
 import util from "util";
 import * as remote from "@electron/remote/main/index.js";
 import path from "path";
+import fs from "fs";
 import electronLocalShortcut from "electron-localshortcut";
 import {
   addBrowserView,
@@ -24,6 +25,7 @@ import {
   sendPromptInView,
   simulateFileDropInView,
   ensureDetachedDevTools,
+  copyAnswerFromView,
 } from "./utilities.js"; // Adjusted path
 import type { SerializedFile } from "./utilities.js";
 import { applyCustomStyles } from "./customStyles.js";
@@ -789,6 +791,83 @@ ipcMain.handle("get-current-prompt", async () => {
 
 ipcMain.on("copy-to-clipboard", (_, text: string) => {
   clipboard.writeText(text ?? "");
+});
+
+// Copy all answers from ChatGPT, Gemini, and Perplexity
+ipcMain.handle("copy-all-answers", async () => {
+  const tempDir = app.getPath("temp");
+  const tempFiles: { provider: string; filePath: string }[] = [];
+
+  // Filter to only ChatGPT, Gemini, and Perplexity views
+  const targetViews = views.filter((v) => {
+    const id = v.id?.toLowerCase() || "";
+    return id.includes("chatgpt") || id.includes("gemini") || id.includes("perplexity");
+  });
+
+  for (const view of targetViews) {
+    try {
+      // Determine provider name
+      let provider = "Unknown";
+      if (view.id?.match("chatgpt")) provider = "ChatGPT";
+      else if (view.id?.match("gemini")) provider = "Gemini";
+      else if (view.id?.match("perplexity")) provider = "Perplexity";
+
+      // Clear clipboard before copying
+      clipboard.writeText("");
+
+      // Focus the view so clipboard API works (requires document focus)
+      view.webContents.focus();
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Simulate clicking the copy button - may return text directly or "__COPIED__"
+      const result = await copyAnswerFromView(view);
+
+      let copiedText = "";
+
+      if (result && result !== "__COPIED__") {
+        // Text was returned directly from page context
+        copiedText = result;
+      } else if (result === "__COPIED__") {
+        // Button clicked, need to read from system clipboard
+        await new Promise((r) => setTimeout(r, 300));
+        copiedText = clipboard.readText();
+      }
+
+      if (copiedText && copiedText.trim().length > 0) {
+        // Save to temp file
+        const tempFilePath = path.join(tempDir, `llm-god-${provider.toLowerCase()}-${Date.now()}.txt`);
+        fs.writeFileSync(tempFilePath, copiedText.trim(), "utf8");
+        tempFiles.push({ provider, filePath: tempFilePath });
+      }
+    } catch (err) {
+      console.error("Failed to copy from view:", view.id, err);
+    }
+  }
+
+  if (tempFiles.length === 0) {
+    return { success: false, message: "No answers found to copy" };
+  }
+
+  // Read all temp files and combine
+  const results: { provider: string; text: string }[] = [];
+  for (const { provider, filePath } of tempFiles) {
+    try {
+      const text = fs.readFileSync(filePath, "utf8");
+      results.push({ provider, text });
+      // Clean up temp file
+      fs.unlinkSync(filePath);
+    } catch (err) {
+      console.error("Failed to read temp file:", filePath, err);
+    }
+  }
+
+  // Combine all answers with provider labels
+  const combined = results
+    .map((r) => `=== ${r.provider} ===\n\n${r.text}`)
+    .join("\n\n" + "=".repeat(50) + "\n\n");
+
+  clipboard.writeText(combined);
+  return { success: true, count: results.length };
 });
 
 ipcMain.on("save-prompt", (event, promptValue: string) => {
