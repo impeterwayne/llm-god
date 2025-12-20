@@ -1,10 +1,10 @@
 {
-  "name": "llm-god",
-  "version": "0.1.0",
+  "name": "LLMs",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "dist/main.js",
-  "author": "Colin Zhou",
+  "author": "Khac Cuong",
   "description": "Prompt multiple LLM's at the same time!",
   "scripts": {
     "build": "tsc",
